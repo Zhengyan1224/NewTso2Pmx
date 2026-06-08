@@ -1,0 +1,378 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:vm="using:NewTso2Pmx.App.ViewModels"
+        xmlns:conv="using:NewTso2Pmx.App.Converters"
+        xmlns:renderer="using:NewTso2Pmx.Renderer"
+        mc:Ignorable="d"
+        x:Class="NewTso2Pmx.App.MainWindow"
+        Title="NewTso2Pmx"
+        Width="1260"
+        Height="800"
+        MinWidth="980"
+        MinHeight="660"
+        FontSize="13"
+        Background="#EEF2F6"
+        Foreground="#1F2937"
+        UseLayoutRounding="True"
+        RequestedThemeVariant="Light"
+        WindowStartupLocation="CenterScreen">
+  <Window.Resources>
+    <conv:BooleanNegationConverter x:Key="BooleanNegationConverter" />
+  </Window.Resources>
+
+  <Window.Styles>
+    <Style Selector="TextBlock">
+      <Setter Property="Foreground" Value="#1F2937" />
+    </Style>
+    <Style Selector="Button">
+      <Setter Property="MinHeight" Value="30" />
+      <Setter Property="Padding" Value="10,6" />
+      <Setter Property="Foreground" Value="White" />
+      <Setter Property="Background" Value="#2563EB" />
+      <Setter Property="BorderBrush" Value="#1D4ED8" />
+      <Setter Property="BorderThickness" Value="1" />
+    </Style>
+    <Style Selector="Button:pointerover">
+      <Setter Property="Background" Value="#1D4ED8" />
+    </Style>
+    <Style Selector="Button:pressed">
+      <Setter Property="Background" Value="#1E40AF" />
+    </Style>
+    <Style Selector="TextBox">
+      <Setter Property="MinHeight" Value="30" />
+      <Setter Property="Foreground" Value="#111827" />
+      <Setter Property="Background" Value="#FFFFFF" />
+      <Setter Property="BorderBrush" Value="#C7D0DC" />
+      <Setter Property="BorderThickness" Value="1" />
+    </Style>
+    <Style Selector="ComboBox">
+      <Setter Property="MinHeight" Value="30" />
+      <Setter Property="Foreground" Value="#111827" />
+      <Setter Property="Background" Value="#FFFFFF" />
+    </Style>
+    <Style Selector="ListBox">
+      <Setter Property="Foreground" Value="#111827" />
+      <Setter Property="Background" Value="#FFFFFF" />
+      <Setter Property="BorderBrush" Value="#D6DEE8" />
+      <Setter Property="BorderThickness" Value="1" />
+    </Style>
+    <Style Selector="TabItem">
+      <Setter Property="Foreground" Value="#1F2937" />
+    </Style>
+    <Style Selector="CheckBox">
+      <Setter Property="Margin" Value="0,1,0,1" />
+      <Setter Property="Foreground" Value="#1F2937" />
+    </Style>
+    <Style Selector="RadioButton">
+      <Setter Property="Margin" Value="0,1,0,1" />
+      <Setter Property="Foreground" Value="#1F2937" />
+    </Style>
+  </Window.Styles>
+
+  <Design.DataContext>
+    <vm:MainWindowViewModel />
+  </Design.DataContext>
+
+  <Grid RowDefinitions="Auto,*,Auto"
+        ColumnDefinitions="360,8,*">
+    <Border Grid.Row="0"
+            Grid.ColumnSpan="3"
+            Padding="10"
+            Background="#E7EDF5"
+            BorderBrush="#CCD6E3"
+            BorderThickness="0,0,0,1">
+      <Grid ColumnDefinitions="*,Auto,Auto,Auto,Auto"
+            ColumnSpacing="8">
+        <TextBox Grid.Column="0"
+                 IsReadOnly="True"
+                 Watermark="拖入 .tso / .png，或使用右侧按钮打开"
+                 Text="{Binding SourcePath}" />
+        <Button Grid.Column="1"
+                Click="OpenFileButton_OnClick"
+                Content="打开文件" />
+        <Button Grid.Column="2"
+                Click="OpenFolderButton_OnClick"
+                Content="打开目录" />
+        <Button Grid.Column="3"
+                Click="RefreshPreviewButton_OnClick"
+                Content="刷新预览" />
+        <Button Grid.Column="4"
+                Click="ExportButton_OnClick"
+                Content="导出 PMX" />
+      </Grid>
+    </Border>
+
+    <Border Grid.Row="1"
+            Grid.Column="0"
+            Margin="10"
+            Padding="8"
+            Background="#FAFBFC"
+            BorderBrush="#D4DCE7"
+            BorderThickness="1"
+            CornerRadius="6">
+      <TabControl>
+        <TabItem Header="基本信息">
+          <ScrollViewer>
+            <StackPanel Spacing="8"
+                        Margin="4">
+              <TextBlock Text="模型名称（9 字以内）" />
+              <TextBox Text="{Binding ModelName}" />
+              <TextBlock Text="注释（127 字以内）" />
+              <TextBox AcceptsReturn="True"
+                       Height="96"
+                       TextWrapping="Wrap"
+                       Text="{Binding Comment}" />
+              <Separator />
+              <TextBlock Text="输出目录" />
+              <RadioButton IsChecked="{Binding OutputCreateSubfolder}"
+                           Content="在源目录下创建同名子目录" />
+              <RadioButton IsChecked="{Binding OutputUseSourceFolder}"
+                           Content="直接输出到源目录" />
+              <RadioButton IsChecked="{Binding OutputUseCustomFolder}"
+                           Content="输出到指定目录" />
+              <Grid ColumnDefinitions="*,Auto"
+                    ColumnSpacing="6">
+                <TextBox Grid.Column="0"
+                         IsEnabled="{Binding OutputUseCustomFolder}"
+                         Text="{Binding CustomOutputFolder}" />
+                <Button Grid.Column="1"
+                        IsEnabled="{Binding OutputUseCustomFolder}"
+                        Click="BrowseOutputFolderButton_OnClick"
+                        Content="浏览" />
+              </Grid>
+            </StackPanel>
+          </ScrollViewer>
+        </TabItem>
+
+        <TabItem Header="骨骼与材质">
+          <ScrollViewer>
+            <StackPanel Spacing="8"
+                        Margin="4">
+              <TextBlock Text="输出骨骼" />
+              <RadioButton IsChecked="{Binding UseHumanBone}"
+                           Content="人型骨骼" />
+              <RadioButton IsChecked="{Binding UseHumanBone, Converter={StaticResource BooleanNegationConverter}}"
+                           Content="单骨骼（用于非人型模型）" />
+              <TextBlock Margin="0,4,0,0"
+                         Text="附加骨骼映射表" />
+              <ItemsControl ItemsSource="{Binding BoneTables}">
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate>
+                    <CheckBox Content="{Binding DisplayName}"
+                              IsChecked="{Binding IsSelected}" />
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+              <Separator />
+              <CheckBox IsChecked="{Binding UseSpheremap}"
+                        Content="使用 SphereMap 修正 Toon 贴图偏色" />
+              <CheckBox IsChecked="{Binding UseEdge}"
+                        Content="导出描边与阴影" />
+              <CheckBox IsChecked="{Binding UniqueMaterial}"
+                        Content="合并属性完全相同的材质" />
+            </StackPanel>
+          </ScrollViewer>
+        </TabItem>
+
+        <TabItem Header="物理">
+          <ScrollViewer>
+            <StackPanel Spacing="8"
+                        Margin="4">
+              <TextBlock Text="头发物理" />
+              <CheckBox IsChecked="{Binding EnableHairPhysics}"
+                        Content="启用头发刚体" />
+              <ComboBox ItemsSource="{Binding HairTemplates}"
+                        SelectedItem="{Binding SelectedHairTemplate}" />
+              <TextBlock Margin="0,4,0,0"
+                         Text="胸部物理" />
+              <CheckBox IsChecked="{Binding EnableChestPhysics}"
+                        Content="启用胸部刚体" />
+              <ComboBox ItemsSource="{Binding ChestTemplates}"
+                        SelectedItem="{Binding SelectedChestTemplate}" />
+              <TextBlock Margin="0,4,0,0"
+                         Text="裙子物理" />
+              <CheckBox IsChecked="{Binding EnableSkirtPhysics}"
+                        Content="启用裙子刚体" />
+              <ComboBox ItemsSource="{Binding SkirtTemplates}"
+                        SelectedItem="{Binding SelectedSkirtTemplate}" />
+              <Separator />
+              <TextBlock Text="其他物理模板" />
+              <ItemsControl ItemsSource="{Binding ExtraPhysicsTemplates}">
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate>
+                    <CheckBox Content="{Binding DisplayName}"
+                              IsChecked="{Binding IsSelected}" />
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+            </StackPanel>
+          </ScrollViewer>
+        </TabItem>
+
+        <TabItem Header="体型">
+          <Grid RowDefinitions="Auto,*,Auto,Auto,Auto"
+                Margin="4">
+            <TextBlock Grid.Row="0"
+                       Margin="0,0,0,6"
+                       Text="导入 / 调整体型 TPO 配置" />
+            <ListBox Grid.Row="1"
+                     x:Name="ProportionListBox"
+                     ItemsSource="{Binding Proportions}"
+                     SelectedItem="{Binding SelectedProportion}">
+              <ListBox.ItemTemplate>
+                <DataTemplate>
+                  <Grid ColumnDefinitions="*,Auto"
+                        ColumnSpacing="8">
+                    <TextBlock Text="{Binding DisplayName}" />
+                    <TextBlock Grid.Column="1"
+                               Text="{Binding RatioText}" />
+                  </Grid>
+                </DataTemplate>
+              </ListBox.ItemTemplate>
+            </ListBox>
+            <Slider Grid.Row="2"
+                    Margin="0,8,0,0"
+                    Minimum="-2"
+                    Maximum="2"
+                    Value="{Binding SelectedProportionValue}"
+                    IsEnabled="{Binding HasSelectedProportion}"
+                    TickFrequency="0.05"
+                    ValueChanged="ProportionSlider_OnValueChanged" />
+            <Grid Grid.Row="3"
+                  Margin="0,8,0,0"
+                  ColumnDefinitions="Auto,Auto,Auto,Auto,*"
+                  ColumnSpacing="6">
+              <Button Grid.Column="0"
+                      Click="DecreaseProportionButton_OnClick"
+                      Content="-" />
+              <Button Grid.Column="1"
+                      Click="IncreaseProportionButton_OnClick"
+                      Content="+" />
+              <Button Grid.Column="2"
+                      Click="ResetCurrentProportionButton_OnClick"
+                      Content="重置当前" />
+              <Button Grid.Column="3"
+                      Click="ResetAllProportionsButton_OnClick"
+                      Content="全部重置" />
+            </Grid>
+            <Grid Grid.Row="4"
+                  Margin="0,8,0,0"
+                  ColumnDefinitions="Auto,Auto,*"
+                  ColumnSpacing="6">
+              <Button Grid.Column="0"
+                      Click="ImportTpoButton_OnClick"
+                      Content="导入 TPOConfig.xml" />
+              <Button Grid.Column="1"
+                      Click="ApplyProportionButton_OnClick"
+                      Content="应用到预览" />
+            </Grid>
+          </Grid>
+        </TabItem>
+      </TabControl>
+    </Border>
+
+    <GridSplitter Grid.Row="1"
+                  Grid.Column="1"
+                  Width="8"
+                  HorizontalAlignment="Stretch"
+                  ResizeDirection="Columns"
+                  Background="#D7E0EB"
+                  ShowsPreview="True" />
+
+    <Grid Grid.Row="1"
+          Grid.Column="2"
+          RowDefinitions="1.45*,0.95*"
+          Margin="0,10,10,10">
+      <Border Grid.Row="0"
+              Padding="6"
+              Background="#F8FAFC"
+              BorderBrush="#D4DCE7"
+              BorderThickness="1"
+              CornerRadius="6">
+        <renderer:SilkPreviewControl x:Name="PreviewControl"
+                                     Scene="{Binding PreviewScene}" />
+      </Border>
+
+      <Border Grid.Row="1"
+              Margin="0,10,0,0"
+              Padding="8"
+              Background="#FAFBFC"
+              BorderBrush="#D4DCE7"
+              BorderThickness="1"
+              CornerRadius="6">
+        <TabControl>
+          <TabItem Header="网格裁剪">
+            <Grid RowDefinitions="Auto,*,Auto"
+                  Margin="2">
+              <Grid ColumnDefinitions="Auto,*"
+                    ColumnSpacing="6">
+                <TextBlock VerticalAlignment="Center"
+                           Text="分组方式" />
+                <ComboBox Grid.Column="1"
+                          x:Name="MeshGroupingComboBox"
+                          MaxWidth="220"
+                          HorizontalAlignment="Left"
+                          SelectionChanged="MeshGroupingComboBox_OnSelectionChanged" />
+              </Grid>
+              <ListBox Grid.Row="1"
+                       Margin="0,8,0,0"
+                       x:Name="MeshGroupListBox"
+                       ItemsSource="{Binding MeshGroups}">
+                <ListBox.ItemTemplate>
+                  <DataTemplate>
+                    <CheckBox Content="{Binding DisplayText}"
+                              IsChecked="{Binding IsSelected}" />
+                  </DataTemplate>
+                </ListBox.ItemTemplate>
+              </ListBox>
+              <TextBlock Grid.Row="2"
+                         Margin="0,6,0,0"
+                         Text="{Binding PreviewSummary}" />
+            </Grid>
+          </TabItem>
+
+          <TabItem Header="材质与着色器">
+            <Grid ColumnDefinitions="220,*"
+                  ColumnSpacing="8"
+                  Margin="2">
+              <ListBox x:Name="MaterialListBox"
+                       ItemsSource="{Binding Materials}"
+                       SelectedItem="{Binding SelectedMaterial}"
+                       SelectionChanged="MaterialListBox_OnSelectionChanged">
+                <ListBox.ItemTemplate>
+                  <DataTemplate>
+                    <TextBlock Text="{Binding DisplayText}" />
+                  </DataTemplate>
+                </ListBox.ItemTemplate>
+              </ListBox>
+              <TextBox Grid.Column="1"
+                       IsReadOnly="True"
+                       TextWrapping="Wrap"
+                       AcceptsReturn="True"
+                       Text="{Binding MaterialDetails}" />
+            </Grid>
+          </TabItem>
+
+          <TabItem Header="模型概览">
+            <ScrollViewer>
+              <TextBlock Margin="4"
+                         TextWrapping="Wrap"
+                         Text="{Binding DocumentSummary}" />
+            </ScrollViewer>
+          </TabItem>
+        </TabControl>
+      </Border>
+    </Grid>
+
+    <Border Grid.Row="2"
+            Grid.ColumnSpan="3"
+            Padding="8,5"
+            Background="#E7EDF5"
+            BorderBrush="#CCD6E3"
+            BorderThickness="0,1,0,0">
+      <TextBlock Text="{Binding StatusMessage}" />
+    </Border>
+  </Grid>
+</Window>

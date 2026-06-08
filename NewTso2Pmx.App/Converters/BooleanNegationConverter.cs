@@ -1,0 +1,16 @@
+using System;
+using System.Globalization;
+using Avalonia.Data.Converters;
+
+namespace NewTso2Pmx.App.Converters;
+
+public sealed class BooleanNegationConverter : IValueConverter
+{
+    public static BooleanNegationConverter Instance { get; } = new();
+
+    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
+        => value is bool boolean ? !boolean : value;
+
+    public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
+        => value is bool boolean ? !boolean : value;
+}

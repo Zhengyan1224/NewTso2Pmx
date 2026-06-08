@@ -1,0 +1,6 @@
+<Solution>
+  <Project Path="NewTso2Pmx.App/NewTso2Pmx.App.csproj" />
+  <Project Path="NewTso2Pmx.Compatibility/NewTso2Pmx.Compatibility.csproj" />
+  <Project Path="NewTso2Pmx.Core/NewTso2Pmx.Core.csproj" />
+  <Project Path="NewTso2Pmx.Renderer/NewTso2Pmx.Renderer.csproj" />
+</Solution>

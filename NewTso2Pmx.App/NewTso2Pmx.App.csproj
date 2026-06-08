@@ -1,0 +1,46 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net9.0</TargetFramework>
+    <RootNamespace>NewTso2Pmx.App</RootNamespace>
+    <AssemblyName>NewTso2Pmx.App</AssemblyName>
+    <AvaloniaUseCompiledBindingsByDefault>false</AvaloniaUseCompiledBindingsByDefault>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\NewTso2Pmx.Compatibility\NewTso2Pmx.Compatibility.csproj" />
+    <ProjectReference Include="..\NewTso2Pmx.Core\NewTso2Pmx.Core.csproj" />
+    <ProjectReference Include="..\NewTso2Pmx.Renderer\NewTso2Pmx.Renderer.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Avalonia" />
+    <PackageReference Include="Avalonia.Desktop" />
+    <PackageReference Include="Avalonia.Themes.Fluent" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="..\..\Tso2Pmx-032\Release\CorrespondTable\**\*">
+      <Link>CorrespondTable\%(RecursiveDir)%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Include="..\..\Tso2Pmx-032\Release\PhysObTemplate\**\*">
+      <Link>PhysObTemplate\%(RecursiveDir)%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Include="..\..\Tso2Pmx-032\Release\Proportion\**\*">
+      <Link>Proportion\%(RecursiveDir)%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Include="..\..\Tso2Pmx-032\Release\表情\**\*">
+      <Link>表情\%(RecursiveDir)%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Include="..\..\Tso2Pmx-032\Release\TPOConfig.xml">
+      <Link>TPOConfig.xml</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+</Project>

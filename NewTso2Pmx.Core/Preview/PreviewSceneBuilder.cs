@@ -1,0 +1,164 @@
+using Microsoft.DirectX;
+using TDCG;
+using NewTso2Pmx.Core.Loading;
+using NumericsVector3 = System.Numerics.Vector3;
+using NumericsVector4 = System.Numerics.Vector4;
+
+namespace NewTso2Pmx.Core.Preview;
+
+public sealed class PreviewSceneBuilder
+{
+    private static readonly NumericsVector4[] Palette =
+    [
+        new(0.85f, 0.27f, 0.19f, 1.0f),
+        new(0.10f, 0.58f, 0.76f, 1.0f),
+        new(0.18f, 0.66f, 0.40f, 1.0f),
+        new(0.93f, 0.69f, 0.13f, 1.0f),
+        new(0.56f, 0.39f, 0.77f, 1.0f),
+        new(0.90f, 0.49f, 0.13f, 1.0f)
+    ];
+
+    public PreviewSceneData Build(LoadedDocument document, IReadOnlyList<bool> selectedSubMeshes)
+    {
+        ArgumentNullException.ThrowIfNull(document);
+        ArgumentNullException.ThrowIfNull(selectedSubMeshes);
+
+        if (selectedSubMeshes.Count != document.SubMeshes.Count)
+        {
+            throw new ArgumentException("网格选择数量与文档子网格数量不一致。", nameof(selectedSubMeshes));
+        }
+
+        var vertices = new List<PreviewVertex>();
+        var indices = new List<uint>();
+        var min = new NumericsVector3(float.MaxValue, float.MaxValue, float.MaxValue);
+        var max = new NumericsVector3(float.MinValue, float.MinValue, float.MinValue);
+
+        for (var tsoIndex = 0; tsoIndex < document.Figure.TSOList.Count; tsoIndex++)
+        {
+            var tso = document.Figure.TSOList[tsoIndex];
+            for (var scriptIndex = 0; scriptIndex < tso.sub_scripts.Length; scriptIndex++)
+            {
+                var color = Palette[(tsoIndex + scriptIndex) % Palette.Length];
+                foreach (var mesh in tso.meshes)
+                {
+                    foreach (var subMesh in mesh.sub_meshes)
+                    {
+                        var info = document.SubMeshes.FirstOrDefault(item =>
+                            item.TsoIndex == tsoIndex &&
+                            item.ScriptIndex == scriptIndex &&
+                            ReferenceEquals(item.SubMesh, subMesh));
+
+                        if (info is null || !selectedSubMeshes[info.FlatIndex] || subMesh.spec != scriptIndex)
+                        {
+                            continue;
+                        }
+
+                        AppendSubMesh(document.Figure, subMesh, color, vertices, indices, ref min, ref max);
+                    }
+                }
+            }
+        }
+
+        if (vertices.Count == 0 || indices.Count == 0)
+        {
+            return PreviewSceneData.Empty;
+        }
+
+        var center = (min + max) * 0.5f;
+        return new PreviewSceneData(vertices, indices, center, min, max);
+    }
+
+    private static void AppendSubMesh(
+        Figure figure,
+        TSOSubMesh subMesh,
+        NumericsVector4 color,
+        ICollection<PreviewVertex> vertices,
+        ICollection<uint> indices,
+        ref NumericsVector3 min,
+        ref NumericsVector3 max)
+    {
+        var baseIndex = (uint)vertices.Count;
+        var clippedBoneMatrices = ClipBoneMatrices(subMesh, figure.Tmo);
+        var localVertices = new List<PreviewVertex>(subMesh.vertices.Length);
+
+        foreach (var vertex in subMesh.vertices)
+        {
+            var position = Microsoft.DirectX.Vector3.Empty;
+            var normal = Microsoft.DirectX.Vector3.Empty;
+
+            foreach (var skinWeight in vertex.skin_weights)
+            {
+                var transform = clippedBoneMatrices[skinWeight.bone_index];
+                position += Microsoft.DirectX.Vector3.TransformCoordinate(vertex.position, transform) * skinWeight.weight;
+
+                transform.M41 = 0;
+                transform.M42 = 0;
+                transform.M43 = 0;
+                normal += Microsoft.DirectX.Vector3.TransformCoordinate(vertex.normal, transform) * skinWeight.weight;
+            }
+
+            var normalized = Microsoft.DirectX.Vector3.Normalize(normal);
+            var previewVertex = new PreviewVertex(
+                new NumericsVector3(position.X, position.Y, position.Z),
+                new NumericsVector3(normalized.X, normalized.Y, normalized.Z),
+                color);
+
+            localVertices.Add(previewVertex);
+            vertices.Add(previewVertex);
+
+            min = NumericsVector3.Min(min, previewVertex.Position);
+            max = NumericsVector3.Max(max, previewVertex.Position);
+        }
+
+        var a = uint.MaxValue;
+        var b = uint.MaxValue;
+        var c = uint.MaxValue;
+
+        for (var i = 0; i < localVertices.Count; i++)
+        {
+            a = b;
+            b = c;
+            c = baseIndex + (uint)i;
+
+            if (i < 2)
+            {
+                continue;
+            }
+
+            var va = localVertices[(int)(a - baseIndex)];
+            var vb = localVertices[(int)(b - baseIndex)];
+            var vc = localVertices[(int)(c - baseIndex)];
+
+            if (va.Position == vb.Position || vb.Position == vc.Position || vc.Position == va.Position)
+            {
+                continue;
+            }
+
+            if (i % 2 == 0)
+            {
+                indices.Add(c);
+                indices.Add(b);
+                indices.Add(a);
+            }
+            else
+            {
+                indices.Add(a);
+                indices.Add(b);
+                indices.Add(c);
+            }
+        }
+    }
+
+    private static Matrix[] ClipBoneMatrices(TSOSubMesh subMesh, TMOFile tmo)
+    {
+        var clippedBoneMatrices = new Matrix[subMesh.maxPalettes];
+        for (var paletteIndex = 0; paletteIndex < subMesh.maxPalettes; paletteIndex++)
+        {
+            var tsoNode = subMesh.GetBone(paletteIndex);
+            var tmoNode = tmo.FindNodeByName(tsoNode.Name);
+            clippedBoneMatrices[paletteIndex] = tsoNode.offset_matrix * tmoNode.combined_matrix;
+        }
+
+        return clippedBoneMatrices;
+    }
+}
