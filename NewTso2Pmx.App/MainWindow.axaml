@@ -15,6 +15,9 @@
         FontSize="13"
         Background="#EEF2F6"
         Foreground="#1F2937"
+        DragDrop.AllowDrop="True"
+        DragDrop.DragOver="Window_OnDragOver"
+        DragDrop.Drop="Window_OnDrop"
         UseLayoutRounding="True"
         RequestedThemeVariant="Light"
         WindowStartupLocation="CenterScreen">
@@ -46,6 +49,14 @@
       <Setter Property="Background" Value="#FFFFFF" />
       <Setter Property="BorderBrush" Value="#C7D0DC" />
       <Setter Property="BorderThickness" Value="1" />
+    </Style>
+    <Style Selector="TextBox.shader-cell">
+      <Setter Property="MinWidth" Value="70" />
+      <Setter Property="Margin" Value="0,0,4,0" />
+    </Style>
+    <Style Selector="TextBox.shader-value">
+      <Setter Property="MinWidth" Value="180" />
+      <Setter Property="Margin" Value="0,0,4,0" />
     </Style>
     <Style Selector="ComboBox">
       <Setter Property="MinHeight" Value="30" />
@@ -259,12 +270,15 @@
             </Grid>
             <Grid Grid.Row="4"
                   Margin="0,8,0,0"
-                  ColumnDefinitions="Auto,Auto,*"
+                  ColumnDefinitions="Auto,Auto,Auto,*"
                   ColumnSpacing="6">
               <Button Grid.Column="0"
                       Click="ImportTpoButton_OnClick"
                       Content="导入 TPOConfig.xml" />
               <Button Grid.Column="1"
+                      Click="SaveDefaultTpoButton_OnClick"
+                      Content="保存为默认" />
+              <Button Grid.Column="2"
                       Click="ApplyProportionButton_OnClick"
                       Content="应用到预览" />
             </Grid>
@@ -304,7 +318,7 @@
               CornerRadius="6">
         <TabControl>
           <TabItem Header="网格裁剪">
-            <Grid RowDefinitions="Auto,*,Auto"
+            <Grid RowDefinitions="Auto,Auto,*,Auto"
                   Margin="2">
               <Grid ColumnDefinitions="Auto,*"
                     ColumnSpacing="6">
@@ -316,7 +330,21 @@
                           HorizontalAlignment="Left"
                           SelectionChanged="MeshGroupingComboBox_OnSelectionChanged" />
               </Grid>
-              <ListBox Grid.Row="1"
+              <Grid Grid.Row="1"
+                    Margin="0,8,0,0"
+                    ColumnDefinitions="Auto,Auto,Auto,*"
+                    ColumnSpacing="6">
+                <Button Grid.Column="0"
+                        Click="SelectAllMeshesButton_OnClick"
+                        Content="全选" />
+                <Button Grid.Column="1"
+                        Click="ClearAllMeshesButton_OnClick"
+                        Content="全不选" />
+                <Button Grid.Column="2"
+                        Click="InvertMeshesButton_OnClick"
+                        Content="反选" />
+              </Grid>
+              <ListBox Grid.Row="2"
                        Margin="0,8,0,0"
                        x:Name="MeshGroupListBox"
                        ItemsSource="{Binding MeshGroups}">
@@ -327,7 +355,7 @@
                   </DataTemplate>
                 </ListBox.ItemTemplate>
               </ListBox>
-              <TextBlock Grid.Row="2"
+              <TextBlock Grid.Row="3"
                          Margin="0,6,0,0"
                          Text="{Binding PreviewSummary}" />
             </Grid>
@@ -347,19 +375,286 @@
                   </DataTemplate>
                 </ListBox.ItemTemplate>
               </ListBox>
-              <TextBox Grid.Column="1"
-                       IsReadOnly="True"
-                       TextWrapping="Wrap"
-                       AcceptsReturn="True"
-                       Text="{Binding MaterialDetails}" />
+              <Grid Grid.Column="1"
+                    RowDefinitions="150,Auto,Auto,*"
+                    RowSpacing="8">
+                <TextBox IsReadOnly="True"
+                         TextWrapping="Wrap"
+                         AcceptsReturn="True"
+                         Text="{Binding MaterialDetails}" />
+                <Grid Grid.Row="1"
+                      ColumnDefinitions="Auto,*"
+                      ColumnSpacing="6">
+                  <Button Grid.Column="0"
+                          Click="CopyShaderDumpButton_OnClick"
+                          Content="复制 Dump" />
+                </Grid>
+                <Grid Grid.Row="2"
+                      ColumnDefinitions="120,180,90,90,90,90"
+                      ColumnSpacing="6">
+                  <TextBlock Text="Type" />
+                  <TextBlock Grid.Column="1"
+                             Text="Name" />
+                  <TextBlock Grid.Column="2"
+                             Text="F1 / Value" />
+                  <TextBlock Grid.Column="3"
+                             Text="F2" />
+                  <TextBlock Grid.Column="4"
+                             Text="F3" />
+                  <TextBlock Grid.Column="5"
+                             Text="F4" />
+                </Grid>
+                <ScrollViewer Grid.Row="3"
+                              HorizontalScrollBarVisibility="Auto"
+                              VerticalScrollBarVisibility="Auto">
+                  <ItemsControl ItemsSource="{Binding ShaderParameters}">
+                    <ItemsControl.ItemTemplate>
+                      <DataTemplate>
+                        <Grid Margin="0,0,0,4"
+                              ColumnDefinitions="120,180,90,90,90,90"
+                              ColumnSpacing="6">
+                          <TextBox IsReadOnly="True"
+                                   Classes="shader-cell"
+                                   Text="{Binding TypeName}" />
+                          <TextBox Grid.Column="1"
+                                   Classes="shader-value"
+                                   Text="{Binding Name, Mode=TwoWay}" />
+                          <TextBox Grid.Column="2"
+                                   Classes="shader-cell"
+                                   IsVisible="{Binding HasF1}"
+                                   Text="{Binding F1, Mode=TwoWay}" />
+                          <TextBox Grid.Column="3"
+                                   Classes="shader-cell"
+                                   IsVisible="{Binding HasF2}"
+                                   Text="{Binding F2, Mode=TwoWay}" />
+                          <TextBox Grid.Column="4"
+                                   Classes="shader-cell"
+                                   IsVisible="{Binding HasF3}"
+                                   Text="{Binding F3, Mode=TwoWay}" />
+                          <TextBox Grid.Column="5"
+                                   Classes="shader-cell"
+                                   IsVisible="{Binding HasF4}"
+                                   Text="{Binding F4, Mode=TwoWay}" />
+                          <TextBox Grid.Column="2"
+                                   Grid.ColumnSpan="4"
+                                   Classes="shader-value"
+                                   IsVisible="{Binding HasTextValue}"
+                                   Text="{Binding ValueText, Mode=TwoWay}" />
+                        </Grid>
+                      </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                  </ItemsControl>
+                </ScrollViewer>
+              </Grid>
+            </Grid>
+          </TabItem>
+
+          <TabItem Header="表情">
+            <Grid RowDefinitions="Auto,*"
+                  Margin="4">
+              <Button HorizontalAlignment="Left"
+                      Click="ResetMorphsButton_OnClick"
+                      Content="重置表情" />
+              <ListBox Grid.Row="1"
+                       Margin="0,8,0,0"
+                       ItemsSource="{Binding Morphs}">
+                <ListBox.ItemTemplate>
+                  <DataTemplate>
+                    <Grid ColumnDefinitions="150,*,48"
+                          ColumnSpacing="8"
+                          Margin="0,3">
+                      <TextBlock VerticalAlignment="Center"
+                                 Text="{Binding DisplayName}" />
+                      <Slider Grid.Column="1"
+                              Minimum="0"
+                              Maximum="1"
+                              TickFrequency="0.05"
+                              Value="{Binding Ratio, Mode=TwoWay}" />
+                      <TextBlock Grid.Column="2"
+                                 VerticalAlignment="Center"
+                                 Text="{Binding RatioText}" />
+                    </Grid>
+                  </DataTemplate>
+                </ListBox.ItemTemplate>
+              </ListBox>
             </Grid>
           </TabItem>
 
           <TabItem Header="模型概览">
             <ScrollViewer>
-              <TextBlock Margin="4"
-                         TextWrapping="Wrap"
-                         Text="{Binding DocumentSummary}" />
+              <StackPanel Margin="4"
+                          Spacing="8">
+                <TextBlock Text="PNG Figure" />
+                <ComboBox ItemsSource="{Binding Figures}"
+                          SelectedItem="{Binding SelectedFigure}"
+                          SelectionChanged="FigureComboBox_OnSelectionChanged" />
+                <Grid ColumnDefinitions="Auto,Auto,Auto,*"
+                      ColumnSpacing="6">
+                  <Button Grid.Column="0"
+                          Click="ImportTmoButton_OnClick"
+                          Content="导入 TMO" />
+                  <Button Grid.Column="1"
+                          Click="ExportTmoButton_OnClick"
+                          Content="导出 TMO" />
+                  <Button Grid.Column="2"
+                          Click="ExportTdcgPngButton_OnClick"
+                          Content="导出 PNG" />
+                </Grid>
+                <Separator />
+                <TextBlock Text="TSO 顺序" />
+                <ListBox x:Name="TsoFileListBox"
+                         MinHeight="120"
+                         ItemsSource="{Binding TsoFiles}"
+                         SelectedItem="{Binding SelectedTsoFile}"
+                         SelectionChanged="TsoFileListBox_OnSelectionChanged">
+                  <ListBox.ItemTemplate>
+                    <DataTemplate>
+                      <TextBlock Text="{Binding DisplayText}" />
+                    </DataTemplate>
+                  </ListBox.ItemTemplate>
+                </ListBox>
+                <TextBlock Text="TSO 分类" />
+                <ComboBox ItemsSource="{Binding TdcgCategories}"
+                          SelectedItem="{Binding SelectedTsoFile.Category, Mode=TwoWay}" />
+                <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,*"
+                      ColumnSpacing="6">
+                  <Button Grid.Column="0"
+                          Click="MoveTsoUpButton_OnClick"
+                          Content="上移" />
+                  <Button Grid.Column="1"
+                          Click="MoveTsoDownButton_OnClick"
+                          Content="下移" />
+                  <Button Grid.Column="2"
+                          Click="AppendTsoButton_OnClick"
+                          Content="追加 TSO" />
+                  <Button Grid.Column="3"
+                          Click="RemoveSelectedTsoButton_OnClick"
+                          Content="移除选中" />
+                </Grid>
+                <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,*"
+                      ColumnSpacing="6">
+                  <Button Grid.Column="0"
+                          Click="ExportSelectedTsoButton_OnClick"
+                          Content="导出选中 TSO" />
+                  <Button Grid.Column="1"
+                          Click="ExportAllTsoButton_OnClick"
+                          Content="导出全部 TSO" />
+                  <Button Grid.Column="2"
+                          Click="ExportSelectedTsoTexturesButton_OnClick"
+                          Content="导出选中贴图" />
+                  <Button Grid.Column="3"
+                          Click="ExportAllTsoTexturesButton_OnClick"
+                          Content="导出全部贴图" />
+                </Grid>
+                <TextBlock Text="SubScripts" />
+                <ListBox x:Name="TsoSubScriptListBox"
+                         MinHeight="120"
+                         ItemsSource="{Binding TsoSubScripts}"
+                         SelectedItem="{Binding SelectedTsoSubScript}"
+                         SelectionChanged="TsoSubScriptListBox_OnSelectionChanged">
+                  <ListBox.ItemTemplate>
+                    <DataTemplate>
+                      <TextBlock Text="{Binding DisplayText}" />
+                    </DataTemplate>
+                  </ListBox.ItemTemplate>
+                </ListBox>
+                <Separator />
+                <TextBlock Text="Figure Sliders" />
+                <Grid ColumnDefinitions="80,*,48"
+                      RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto"
+                      RowSpacing="6"
+                      ColumnSpacing="8">
+                  <TextBlock VerticalAlignment="Center"
+                             Text="Arm" />
+                  <Slider Grid.Column="1"
+                          Minimum="0"
+                          Maximum="1"
+                          TickFrequency="0.05"
+                          Value="{Binding FigureArmRatio, Mode=TwoWay}"
+                          ValueChanged="FigureSlider_OnValueChanged" />
+                  <TextBlock Grid.Column="2"
+                             VerticalAlignment="Center"
+                             Text="{Binding FigureArmRatioText}" />
+
+                  <TextBlock Grid.Row="1"
+                             VerticalAlignment="Center"
+                             Text="Leg" />
+                  <Slider Grid.Row="1"
+                          Grid.Column="1"
+                          Minimum="0"
+                          Maximum="1"
+                          TickFrequency="0.05"
+                          Value="{Binding FigureLegRatio, Mode=TwoWay}"
+                          ValueChanged="FigureSlider_OnValueChanged" />
+                  <TextBlock Grid.Row="1"
+                             Grid.Column="2"
+                             VerticalAlignment="Center"
+                             Text="{Binding FigureLegRatioText}" />
+
+                  <TextBlock Grid.Row="2"
+                             VerticalAlignment="Center"
+                             Text="Waist" />
+                  <Slider Grid.Row="2"
+                          Grid.Column="1"
+                          Minimum="0"
+                          Maximum="1"
+                          TickFrequency="0.05"
+                          Value="{Binding FigureWaistRatio, Mode=TwoWay}"
+                          ValueChanged="FigureSlider_OnValueChanged" />
+                  <TextBlock Grid.Row="2"
+                             Grid.Column="2"
+                             VerticalAlignment="Center"
+                             Text="{Binding FigureWaistRatioText}" />
+
+                  <TextBlock Grid.Row="3"
+                             VerticalAlignment="Center"
+                             Text="Bust" />
+                  <Slider Grid.Row="3"
+                          Grid.Column="1"
+                          Minimum="0"
+                          Maximum="1"
+                          TickFrequency="0.05"
+                          Value="{Binding FigureBustRatio, Mode=TwoWay}"
+                          ValueChanged="FigureSlider_OnValueChanged" />
+                  <TextBlock Grid.Row="3"
+                             Grid.Column="2"
+                             VerticalAlignment="Center"
+                             Text="{Binding FigureBustRatioText}" />
+
+                  <TextBlock Grid.Row="4"
+                             VerticalAlignment="Center"
+                             Text="Tall" />
+                  <Slider Grid.Row="4"
+                          Grid.Column="1"
+                          Minimum="0"
+                          Maximum="1"
+                          TickFrequency="0.05"
+                          Value="{Binding FigureTallRatio, Mode=TwoWay}"
+                          ValueChanged="FigureSlider_OnValueChanged" />
+                  <TextBlock Grid.Row="4"
+                             Grid.Column="2"
+                             VerticalAlignment="Center"
+                             Text="{Binding FigureTallRatioText}" />
+
+                  <TextBlock Grid.Row="5"
+                             VerticalAlignment="Center"
+                             Text="Eye" />
+                  <Slider Grid.Row="5"
+                          Grid.Column="1"
+                          Minimum="0"
+                          Maximum="1"
+                          TickFrequency="0.05"
+                          Value="{Binding FigureEyeRatio, Mode=TwoWay}"
+                          ValueChanged="FigureSlider_OnValueChanged" />
+                  <TextBlock Grid.Row="5"
+                             Grid.Column="2"
+                             VerticalAlignment="Center"
+                             Text="{Binding FigureEyeRatioText}" />
+                </Grid>
+                <Separator />
+                <TextBlock TextWrapping="Wrap"
+                           Text="{Binding DocumentSummary}" />
+              </StackPanel>
             </ScrollViewer>
           </TabItem>
         </TabControl>

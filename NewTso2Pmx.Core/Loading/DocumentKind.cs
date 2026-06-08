@@ -4,6 +4,7 @@ public enum DocumentKind
 {
     Unknown = 0,
     TsoFile,
+    TsoFileSet,
     SavePng,
     TsoDirectory
 }

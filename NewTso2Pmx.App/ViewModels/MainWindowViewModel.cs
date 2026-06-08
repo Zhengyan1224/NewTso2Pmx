@@ -31,7 +31,16 @@ public sealed class MainWindowViewModel : ViewModelBase
     private ProportionViewModel? _selectedProportion;
     private double _selectedProportionValue;
     private MaterialViewModel? _selectedMaterial;
+    private TsoFileViewModel? _selectedTsoFile;
+    private TsoSubScriptViewModel? _selectedTsoSubScript;
+    private FigureOptionViewModel? _selectedFigure;
     private PreviewSceneData? _previewScene;
+    private double _figureArmRatio = 0.5;
+    private double _figureLegRatio = 0.5;
+    private double _figureWaistRatio;
+    private double _figureBustRatio = 0.5;
+    private double _figureTallRatio = 0.5;
+    private double _figureEyeRatio = 0.5;
 
     public string SourcePath
     {
@@ -213,11 +222,113 @@ public sealed class MainWindowViewModel : ViewModelBase
         set => SetProperty(ref _selectedMaterial, value);
     }
 
+    public TsoFileViewModel? SelectedTsoFile
+    {
+        get => _selectedTsoFile;
+        set => SetProperty(ref _selectedTsoFile, value);
+    }
+
+    public TsoSubScriptViewModel? SelectedTsoSubScript
+    {
+        get => _selectedTsoSubScript;
+        set => SetProperty(ref _selectedTsoSubScript, value);
+    }
+
+    public FigureOptionViewModel? SelectedFigure
+    {
+        get => _selectedFigure;
+        set => SetProperty(ref _selectedFigure, value);
+    }
+
     public PreviewSceneData? PreviewScene
     {
         get => _previewScene;
         set => SetProperty(ref _previewScene, value);
     }
+
+    public double FigureArmRatio
+    {
+        get => _figureArmRatio;
+        set
+        {
+            if (SetProperty(ref _figureArmRatio, value))
+            {
+                RaisePropertyChanged(nameof(FigureArmRatioText));
+            }
+        }
+    }
+
+    public double FigureLegRatio
+    {
+        get => _figureLegRatio;
+        set
+        {
+            if (SetProperty(ref _figureLegRatio, value))
+            {
+                RaisePropertyChanged(nameof(FigureLegRatioText));
+            }
+        }
+    }
+
+    public double FigureWaistRatio
+    {
+        get => _figureWaistRatio;
+        set
+        {
+            if (SetProperty(ref _figureWaistRatio, value))
+            {
+                RaisePropertyChanged(nameof(FigureWaistRatioText));
+            }
+        }
+    }
+
+    public double FigureBustRatio
+    {
+        get => _figureBustRatio;
+        set
+        {
+            if (SetProperty(ref _figureBustRatio, value))
+            {
+                RaisePropertyChanged(nameof(FigureBustRatioText));
+            }
+        }
+    }
+
+    public double FigureTallRatio
+    {
+        get => _figureTallRatio;
+        set
+        {
+            if (SetProperty(ref _figureTallRatio, value))
+            {
+                RaisePropertyChanged(nameof(FigureTallRatioText));
+            }
+        }
+    }
+
+    public double FigureEyeRatio
+    {
+        get => _figureEyeRatio;
+        set
+        {
+            if (SetProperty(ref _figureEyeRatio, value))
+            {
+                RaisePropertyChanged(nameof(FigureEyeRatioText));
+            }
+        }
+    }
+
+    public string FigureArmRatioText => FigureArmRatio.ToString("0.00");
+
+    public string FigureLegRatioText => FigureLegRatio.ToString("0.00");
+
+    public string FigureWaistRatioText => FigureWaistRatio.ToString("0.00");
+
+    public string FigureBustRatioText => FigureBustRatio.ToString("0.00");
+
+    public string FigureTallRatioText => FigureTallRatio.ToString("0.00");
+
+    public string FigureEyeRatioText => FigureEyeRatio.ToString("0.00");
 
     public ObservableCollection<SelectableItemViewModel> BoneTables { get; } = [];
 
@@ -234,4 +345,16 @@ public sealed class MainWindowViewModel : ViewModelBase
     public ObservableCollection<MeshGroupViewModel> MeshGroups { get; } = [];
 
     public ObservableCollection<MaterialViewModel> Materials { get; } = [];
+
+    public ObservableCollection<ShaderParameterViewModel> ShaderParameters { get; } = [];
+
+    public ObservableCollection<MorphOptionViewModel> Morphs { get; } = [];
+
+    public ObservableCollection<string> TdcgCategories { get; } = [];
+
+    public ObservableCollection<TsoFileViewModel> TsoFiles { get; } = [];
+
+    public ObservableCollection<TsoSubScriptViewModel> TsoSubScripts { get; } = [];
+
+    public ObservableCollection<FigureOptionViewModel> Figures { get; } = [];
 }

@@ -25,35 +25,79 @@ public sealed class TsoDocumentLoader
         };
     }
 
-    private LoadedDocument LoadTso(string sourcePath)
+    public LoadedDocument Load(IReadOnlyList<string> sourcePaths)
     {
-        var figure = new Figure();
-        var tso = new TSOFile();
-        tso.Load(sourcePath);
-        figure.AddTSO(tso);
-        figure.UpdateNodeMapAndBoneMatrices();
+        ArgumentNullException.ThrowIfNull(sourcePaths);
 
-        var category = Path.GetFileNameWithoutExtension(sourcePath);
-        return CreateDocument(
-            sourcePath,
-            DocumentKind.TsoFile,
-            figure,
-            new[] { category });
-    }
-
-    private LoadedDocument LoadDirectory(string sourcePath)
-    {
-        var files = Directory.GetFiles(sourcePath, "*.TSO", SearchOption.TopDirectoryOnly)
-            .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+        var files = sourcePaths
+            .Where(path => !string.IsNullOrWhiteSpace(path))
             .ToArray();
-
         if (files.Length == 0)
         {
-            throw new FileNotFoundException("目录中没有找到 .TSO 文件。", sourcePath);
+            throw new ArgumentException("No input files were provided.", nameof(sourcePaths));
         }
 
+        if (files.Length == 1)
+        {
+            return Load(files[0]);
+        }
+
+        if (files.Any(path => !IsTsoPath(path)))
+        {
+            throw new NotSupportedException("Multiple input selection only supports .tso files.");
+        }
+
+        return LoadTsoFiles(files, files[0], DocumentKind.TsoFileSet);
+    }
+
+    public LoadedDocument Load(string sourcePath, int figureIndex)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(sourcePath);
+
+        if (Directory.Exists(sourcePath))
+        {
+            if (figureIndex != 0)
+            {
+                throw new ArgumentOutOfRangeException(nameof(figureIndex));
+            }
+
+            return LoadDirectory(sourcePath);
+        }
+
+        var extension = Path.GetExtension(sourcePath).ToLowerInvariant();
+        return extension switch
+        {
+            ".tso" when figureIndex == 0 => LoadTso(sourcePath),
+            ".tso" => throw new ArgumentOutOfRangeException(nameof(figureIndex)),
+            ".png" => LoadPng(sourcePath, figureIndex),
+            _ => throw new NotSupportedException($"Unsupported input type: {sourcePath}")
+        };
+    }
+
+    public LoadedDocument Rebuild(LoadedDocument document, IReadOnlyList<string> categories)
+    {
+        ArgumentNullException.ThrowIfNull(document);
+
+        return CreateDocument(
+            document.SourcePath,
+            document.Kind,
+            document.Figure,
+            categories,
+            document.FigureIndex,
+            document.FigureCount);
+    }
+
+    private LoadedDocument LoadTso(string sourcePath)
+        => LoadTsoFiles([sourcePath], sourcePath, DocumentKind.TsoFile);
+
+    private static LoadedDocument LoadTsoFiles(
+        IReadOnlyList<string> files,
+        string sourcePath,
+        DocumentKind kind)
+    {
         var figure = new Figure();
-        var categories = new List<string>(files.Length);
+        var categories = new List<string>(files.Count);
+
         foreach (var file in files)
         {
             var tso = new TSOFile();
@@ -63,12 +107,31 @@ public sealed class TsoDocumentLoader
         }
 
         figure.UpdateNodeMapAndBoneMatrices();
+
         return CreateDocument(
             sourcePath,
-            DocumentKind.TsoDirectory,
+            kind,
             figure,
             categories);
     }
+
+    private LoadedDocument LoadDirectory(string sourcePath)
+    {
+        var files = Directory.EnumerateFiles(sourcePath, "*", SearchOption.TopDirectoryOnly)
+            .Where(IsTsoPath)
+            .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        if (files.Length == 0)
+        {
+            throw new FileNotFoundException("目录中没有找到 .TSO 文件。", sourcePath);
+        }
+
+        return LoadTsoFiles(files, sourcePath, DocumentKind.TsoDirectory);
+    }
+
+    private static bool IsTsoPath(string path)
+        => Path.GetExtension(path).Equals(".tso", StringComparison.OrdinalIgnoreCase);
 
     private LoadedDocument LoadPng(string sourcePath)
     {
@@ -89,11 +152,50 @@ public sealed class TsoDocumentLoader
             categories);
     }
 
+    private LoadedDocument LoadPng(string sourcePath, int figureIndex)
+    {
+        var payload = LoadPngPayload(sourcePath);
+        if (figureIndex < 0 || figureIndex >= payload.Figures.Count)
+        {
+            throw new ArgumentOutOfRangeException(nameof(figureIndex));
+        }
+
+        var categories = GetPngCategories(sourcePath, payload.Figures, figureIndex);
+
+        return CreateDocument(
+            sourcePath,
+            DocumentKind.SavePng,
+            payload.Figures[figureIndex],
+            categories,
+            figureIndex,
+            payload.Figures.Count);
+    }
+
+    private static List<string> GetPngCategories(
+        string sourcePath,
+        IReadOnlyList<Figure> figures,
+        int figureIndex)
+    {
+        var flatCategories = new PNGFileUtils().GetCategoryList(sourcePath);
+        var offset = figures.Take(figureIndex).Sum(figure => figure.TSOList.Count);
+        var count = figures[figureIndex].TSOList.Count;
+        var categories = flatCategories.Skip(offset).Take(count).ToList();
+
+        while (categories.Count < count)
+        {
+            categories.Add($"Object {categories.Count + 1}");
+        }
+
+        return categories;
+    }
+
     private static LoadedDocument CreateDocument(
         string sourcePath,
         DocumentKind kind,
         Figure figure,
-        IReadOnlyList<string> categories)
+        IReadOnlyList<string> categories,
+        int figureIndex = 0,
+        int figureCount = 1)
     {
         var tsoInfos = new List<LoadedTsoInfo>(figure.TSOList.Count);
         var materials = new List<LoadedMaterialInfo>();
@@ -157,7 +259,7 @@ public sealed class TsoDocumentLoader
             }
         }
 
-        return new LoadedDocument(sourcePath, kind, figure, categories, tsoInfos, subMeshes, materials);
+        return new LoadedDocument(sourcePath, kind, figure, categories, tsoInfos, subMeshes, materials, figureIndex, figureCount);
     }
     private static PngPayload LoadPngPayload(string sourcePath)
     {

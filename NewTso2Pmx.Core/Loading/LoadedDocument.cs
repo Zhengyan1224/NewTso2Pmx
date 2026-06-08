@@ -11,7 +11,9 @@ public sealed class LoadedDocument : IDisposable
         IReadOnlyList<string> categories,
         IReadOnlyList<LoadedTsoInfo> tsoFiles,
         IReadOnlyList<FlatSubMeshInfo> subMeshes,
-        IReadOnlyList<LoadedMaterialInfo> materials)
+        IReadOnlyList<LoadedMaterialInfo> materials,
+        int figureIndex = 0,
+        int figureCount = 1)
     {
         SourcePath = sourcePath;
         Kind = kind;
@@ -20,6 +22,8 @@ public sealed class LoadedDocument : IDisposable
         TsoFiles = tsoFiles;
         SubMeshes = subMeshes;
         Materials = materials;
+        FigureIndex = figureIndex;
+        FigureCount = figureCount;
     }
 
     public string SourcePath { get; }
@@ -35,6 +39,10 @@ public sealed class LoadedDocument : IDisposable
     public IReadOnlyList<FlatSubMeshInfo> SubMeshes { get; }
 
     public IReadOnlyList<LoadedMaterialInfo> Materials { get; }
+
+    public int FigureIndex { get; }
+
+    public int FigureCount { get; }
 
     public IReadOnlyList<MeshGroupDescriptor> CreateMeshGroups(MeshGroupingMode mode)
         => MeshGrouping.Build(SubMeshes, mode);

@@ -27,7 +27,10 @@ public sealed class SilkPreviewControl : OpenGlControlBase
     private float _yaw = -0.8f;
     private float _pitch = 0.35f;
     private float _distance = 40.0f;
+    private Vector3 _targetOffset = Vector3.Zero;
     private bool _isRotating;
+    private bool _isPanning;
+    private bool _isZooming;
     private Point _lastPointerPosition;
 
     public SilkPreviewControl()
@@ -124,7 +127,7 @@ public sealed class SilkPreviewControl : OpenGlControlBase
         }
 
         var aspect = (float)Math.Max(0.2, Bounds.Width / Math.Max(1.0, Bounds.Height));
-        var target = _uploadedScene.Center;
+        var target = _uploadedScene.Center + _targetOffset;
         var cameraOffset = new Vector3(
             _distance * MathF.Cos(_pitch) * MathF.Sin(_yaw),
             _distance * MathF.Sin(_pitch),
@@ -145,7 +148,33 @@ public sealed class SilkPreviewControl : OpenGlControlBase
     protected override void OnPointerPressed(PointerPressedEventArgs e)
     {
         base.OnPointerPressed(e);
-        if (e.GetCurrentPoint(this).Properties.IsLeftButtonPressed)
+        Focus();
+
+        var point = e.GetCurrentPoint(this);
+        if (e.ClickCount == 2)
+        {
+            ResetCamera();
+            return;
+        }
+
+        if (point.Properties.IsMiddleButtonPressed ||
+            (point.Properties.IsLeftButtonPressed && e.KeyModifiers.HasFlag(KeyModifiers.Control)))
+        {
+            _isPanning = true;
+            _lastPointerPosition = e.GetPosition(this);
+            e.Pointer.Capture(this);
+            return;
+        }
+
+        if (point.Properties.IsRightButtonPressed)
+        {
+            _isZooming = true;
+            _lastPointerPosition = e.GetPosition(this);
+            e.Pointer.Capture(this);
+            return;
+        }
+
+        if (point.Properties.IsLeftButtonPressed)
         {
             _isRotating = true;
             _lastPointerPosition = e.GetPosition(this);
@@ -157,13 +186,15 @@ public sealed class SilkPreviewControl : OpenGlControlBase
     {
         base.OnPointerReleased(e);
         _isRotating = false;
+        _isPanning = false;
+        _isZooming = false;
         e.Pointer.Capture(null);
     }
 
     protected override void OnPointerMoved(PointerEventArgs e)
     {
         base.OnPointerMoved(e);
-        if (!_isRotating)
+        if (!_isRotating && !_isPanning && !_isZooming)
         {
             return;
         }
@@ -171,8 +202,21 @@ public sealed class SilkPreviewControl : OpenGlControlBase
         var position = e.GetPosition(this);
         var delta = position - _lastPointerPosition;
         _lastPointerPosition = position;
-        _yaw += (float)delta.X * 0.01f;
-        _pitch = Math.Clamp(_pitch + (float)delta.Y * 0.01f, -1.45f, 1.45f);
+
+        if (_isPanning)
+        {
+            PanCamera(delta);
+        }
+        else if (_isZooming)
+        {
+            _distance = Math.Clamp(_distance * (1.0f + (float)delta.Y * 0.01f), 1.0f, 5000.0f);
+        }
+        else
+        {
+            _yaw += (float)delta.X * 0.01f;
+            _pitch = Math.Clamp(_pitch + (float)delta.Y * 0.01f, -1.45f, 1.45f);
+        }
+
         RequestNextFrameRendering();
     }
 
@@ -241,12 +285,30 @@ public sealed class SilkPreviewControl : OpenGlControlBase
         if (scene is null || scene.IsEmpty)
         {
             _distance = 40.0f;
+            _targetOffset = Vector3.Zero;
             return;
         }
 
         var extent = scene.Max - scene.Min;
         var radius = MathF.Max(MathF.Max(extent.X, extent.Y), extent.Z) * 0.75f;
         _distance = Math.Clamp(radius * 2.8f + 5.0f, 10.0f, 5000.0f);
+        _targetOffset = Vector3.Zero;
+    }
+
+    private void ResetCamera()
+    {
+        _yaw = -0.8f;
+        _pitch = 0.35f;
+        UpdateCameraFromScene(Scene);
+        RequestNextFrameRendering();
+    }
+
+    private void PanCamera(Point delta)
+    {
+        var right = Vector3.Normalize(new Vector3(MathF.Cos(_yaw), 0.0f, -MathF.Sin(_yaw)));
+        var up = Vector3.UnitY;
+        var scale = MathF.Max(_distance, 1.0f) * 0.0025f;
+        _targetOffset += right * (float)(-delta.X * scale) + up * (float)(delta.Y * scale);
     }
 
     private static uint CreateProgram(GL gl)
