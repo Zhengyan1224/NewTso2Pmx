@@ -21,26 +21,10 @@
   </ItemGroup>
 
   <ItemGroup>
-    <None Include="..\..\Tso2Pmx-032\Release\CorrespondTable\**\*">
-      <Link>CorrespondTable\%(RecursiveDir)%(Filename)%(Extension)</Link>
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-    <None Include="..\..\Tso2Pmx-032\Release\PhysObTemplate\**\*">
-      <Link>PhysObTemplate\%(RecursiveDir)%(Filename)%(Extension)</Link>
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-    <None Include="..\..\Tso2Pmx-032\Release\Proportion\**\*">
-      <Link>Proportion\%(RecursiveDir)%(Filename)%(Extension)</Link>
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-    <None Include="..\..\Tso2Pmx-032\Release\表情\**\*">
-      <Link>表情\%(RecursiveDir)%(Filename)%(Extension)</Link>
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-    <None Include="..\..\Tso2Pmx-032\Release\TPOConfig.xml">
-      <Link>TPOConfig.xml</Link>
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
+    <Compile Remove="PhysObTemplate\**\*.cs" />
+    <Compile Remove="Proportion\**\*.cs" />
+    <None Include="PhysObTemplate\**\*.cs;Proportion\**\*.cs" CopyToOutputDirectory="PreserveNewest" />
+    <None Update="CorrespondTable\**\*;PhysObTemplate\**\*;Proportion\**\*;表情\**\*;TPOConfig.xml" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>
