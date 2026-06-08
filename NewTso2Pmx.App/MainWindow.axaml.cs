@@ -1361,6 +1361,35 @@ public partial class MainWindow : Window
         return true;
     }
 
+    private static void ValidateTsoCanAppend(Figure figure, TSOFile tso, string sourcePath)
+    {
+        if (figure.Tmo.nodemap is null)
+        {
+            throw new InvalidOperationException("当前模型没有可用于追加校验的 TMO 骨骼映射。");
+        }
+
+        foreach (var node in tso.nodes)
+        {
+            if (!figure.Tmo.nodemap.ContainsKey(node.Path))
+            {
+                throw new InvalidOperationException(
+                    $"{Path.GetFileName(sourcePath)} 缺少当前模型 TMO 可匹配的骨骼：{node.Path}");
+            }
+        }
+    }
+
+    private static void SafeDisposeTso(TSOFile tso)
+    {
+        try
+        {
+            tso.Dispose();
+        }
+        catch (NullReferenceException)
+        {
+            // TSOFile.Dispose assumes a fully loaded file; ignore partial-load cleanup failures.
+        }
+    }
+
     private async void ExportButton_OnClick(object? sender, RoutedEventArgs e)
     {
         if (_loadedDocument is null)
@@ -1761,6 +1790,125 @@ public partial class MainWindow : Window
     private void MoveTsoDownButton_OnClick(object? sender, RoutedEventArgs e)
     {
         MoveSelectedTso(1);
+    }
+
+    private async void AppendTsoButton_OnClick(object? sender, RoutedEventArgs e)
+    {
+        if (_loadedDocument is null)
+        {
+            _viewModel.StatusMessage = "请先加载模型，再追加 TSO。";
+            return;
+        }
+
+        if (!StorageProvider.CanOpen)
+        {
+            _viewModel.StatusMessage = "当前平台不支持文件选择器。";
+            return;
+        }
+
+        var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+        {
+            Title = "选择要追加的 TSO 文件",
+            AllowMultiple = true,
+            FileTypeFilter =
+            [
+                CreateTsoFileType()
+            ]
+        });
+
+        var paths = files
+            .Select(file => file.TryGetLocalPath())
+            .Where(path => !string.IsNullOrWhiteSpace(path))
+            .Select(path => path!)
+            .ToArray();
+        if (paths.Length == 0)
+        {
+            return;
+        }
+
+        var loadedTsos = new List<(TSOFile Tso, string Category)>(paths.Length);
+        var appendedToFigure = false;
+
+        try
+        {
+            foreach (var path in paths)
+            {
+                var tso = new TSOFile();
+                try
+                {
+                    tso.Load(path);
+                    ValidateTsoCanAppend(_loadedDocument.Figure, tso, path);
+                    loadedTsos.Add((tso, Path.GetFileNameWithoutExtension(path)));
+                }
+                catch
+                {
+                    SafeDisposeTso(tso);
+                    throw;
+                }
+            }
+
+            var categories = _loadedDocument.Categories.ToList();
+            var firstAddedIndex = _loadedDocument.Figure.TSOList.Count;
+
+            foreach (var (tso, category) in loadedTsos)
+            {
+                _loadedDocument.Figure.TSOList.Add(tso);
+                categories.Add(category);
+            }
+
+            appendedToFigure = true;
+            RefreshCurrentDocument(categories, firstAddedIndex);
+            _viewModel.StatusMessage = $"已追加 {loadedTsos.Count} 个 TSO。";
+        }
+        catch (Exception ex)
+        {
+            if (!appendedToFigure)
+            {
+                foreach (var (tso, _) in loadedTsos)
+                {
+                    SafeDisposeTso(tso);
+                }
+            }
+
+            _viewModel.StatusMessage = $"追加 TSO 失败：{ex.Message}";
+        }
+    }
+
+    private void RemoveSelectedTsoButton_OnClick(object? sender, RoutedEventArgs e)
+    {
+        if (_loadedDocument is null || _viewModel.SelectedTsoFile is null)
+        {
+            _viewModel.StatusMessage = "请先选择 TSO。";
+            return;
+        }
+
+        if (_loadedDocument.Figure.TSOList.Count <= 1)
+        {
+            _viewModel.StatusMessage = "至少需要保留 1 个 TSO。";
+            return;
+        }
+
+        var removeIndex = _viewModel.SelectedTsoFile.Index;
+        if (removeIndex < 0 || removeIndex >= _loadedDocument.Figure.TSOList.Count)
+        {
+            return;
+        }
+
+        var categories = _loadedDocument.Categories.ToList();
+        var removedCategory = categories.Count > removeIndex ? categories[removeIndex] : _viewModel.SelectedTsoFile.Category;
+        var removedTso = _loadedDocument.Figure.TSOList[removeIndex];
+
+        _loadedDocument.Figure.TSOList.RemoveAt(removeIndex);
+        if (removeIndex < categories.Count)
+        {
+            categories.RemoveAt(removeIndex);
+        }
+
+        SafeDisposeTso(removedTso);
+
+        var selectedIndex = Math.Min(removeIndex, _loadedDocument.Figure.TSOList.Count - 1);
+        RefreshCurrentDocument(categories, selectedIndex);
+        _viewModel.StatusMessage = $"已移除 TSO：{removedCategory}";
     }
 
     private void TsoFileListBox_OnSelectionChanged(object? sender, SelectionChangedEventArgs e)
