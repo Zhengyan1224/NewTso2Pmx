@@ -1,4 +1,5 @@
 using System.Text;
+using Microsoft.DirectX;
 using TDCG;
 
 namespace NewTso2Pmx.Core.Loading;
@@ -69,10 +70,15 @@ public static class TdcgPngExporter
     }
 
     public static void Save(LoadedDocument document, Stream destinationStream)
+        => Save(document, destinationStream, previewPngBytes: null);
+
+    public static void Save(LoadedDocument document, Stream destinationStream, byte[]? previewPngBytes)
     {
         ArgumentNullException.ThrowIfNull(document);
         ArgumentNullException.ThrowIfNull(destinationStream);
 
+        var imageChunks = CreateImageChunks(previewPngBytes);
+        var preservedChunks = LoadSafePreservedChunks(document.SourcePath);
         var png = new PNGFile
         {
             WriteTaOb = writer =>
@@ -98,9 +104,95 @@ public static class TdcgPngExporter
         };
 
         png.header = PngHeader;
-        png.ihdr = OnePixelRgbaPngIhdr;
-        png.IdatList.Add(OnePixelTransparentIdat);
+        png.ihdr = imageChunks.Ihdr;
+        foreach (var chunk in preservedChunks.BeforeIdat)
+        {
+            png.ChunksBeforeIdat.Add(chunk);
+        }
+
+        foreach (var idat in imageChunks.Idats)
+        {
+            png.IdatList.Add(idat);
+        }
+
+        foreach (var chunk in preservedChunks.AfterIdat)
+        {
+            png.ChunksAfterIdat.Add(chunk);
+        }
+
         png.Save(destinationStream);
+    }
+
+    public static void SavePose(TMOFile tmo, Vector3 lightDirection, Stream destinationStream, byte[]? previewPngBytes)
+    {
+        ArgumentNullException.ThrowIfNull(tmo);
+        ArgumentNullException.ThrowIfNull(destinationStream);
+
+        var imageChunks = CreateImageChunks(previewPngBytes);
+        var png = new PNGFile
+        {
+            WriteTaOb = writer =>
+            {
+                var pngWriter = new PNGWriter(writer);
+                pngWriter.WriteTDCG();
+                pngWriter.WritePOSE();
+                pngWriter.WriteLGTA(CreateLightData(lightDirection));
+                pngWriter.WriteFTMO(tmo);
+            }
+        };
+
+        png.header = PngHeader;
+        png.ihdr = imageChunks.Ihdr;
+        foreach (var idat in imageChunks.Idats)
+        {
+            png.IdatList.Add(idat);
+        }
+
+        png.Save(destinationStream);
+    }
+
+    private static PreservedChunks LoadSafePreservedChunks(string sourcePath)
+    {
+        if (string.IsNullOrWhiteSpace(sourcePath) || !File.Exists(sourcePath))
+        {
+            return PreservedChunks.Empty;
+        }
+
+        if (!Path.GetExtension(sourcePath).Equals(".png", StringComparison.OrdinalIgnoreCase))
+        {
+            return PreservedChunks.Empty;
+        }
+
+        try
+        {
+            var png = new PNGFile();
+            png.Load(sourcePath);
+            return new PreservedChunks(
+                png.ChunksBeforeIdat.ToArray(),
+                png.ChunksAfterIdat.ToArray());
+        }
+        catch
+        {
+            return PreservedChunks.Empty;
+        }
+    }
+
+    private static ImageChunks CreateImageChunks(byte[]? previewPngBytes)
+    {
+        if (previewPngBytes is null || previewPngBytes.Length == 0)
+        {
+            return new ImageChunks(OnePixelRgbaPngIhdr, [OnePixelTransparentIdat]);
+        }
+
+        using var stream = new MemoryStream(previewPngBytes, writable: false);
+        var png = new PNGFile();
+        png.Load(stream);
+        if (png.ihdr.Length == 0 || png.IdatList.Count == 0)
+        {
+            throw new InvalidDataException("预览 PNG 缺少 IHDR 或 IDAT 数据。");
+        }
+
+        return new ImageChunks(png.ihdr, png.IdatList.ToArray());
     }
 
     private static byte[] CreateFiguData(SliderMatrix sliderMatrix)
@@ -120,9 +212,46 @@ public static class TdcgPngExporter
         return stream.ToArray();
     }
 
+    private static byte[] CreateLightData(Vector3 lightDirection)
+    {
+        var direction = lightDirection == Vector3.Empty
+            ? new Vector3(0.0f, 0.0f, -1.0f)
+            : Vector3.Normalize(lightDirection);
+
+        using var stream = new MemoryStream(sizeof(float) * 16);
+        using var writer = new BinaryWriter(stream, Encoding.UTF8, leaveOpen: true);
+
+        writer.Write(1.0f);
+        writer.Write(0.0f);
+        writer.Write(0.0f);
+        writer.Write(0.0f);
+        writer.Write(0.0f);
+        writer.Write(1.0f);
+        writer.Write(0.0f);
+        writer.Write(0.0f);
+        writer.Write(-direction.X);
+        writer.Write(-direction.Y);
+        writer.Write(-direction.Z);
+        writer.Write(0.0f);
+        writer.Write(0.0f);
+        writer.Write(0.0f);
+        writer.Write(0.0f);
+        writer.Write(1.0f);
+        writer.Flush();
+
+        return stream.ToArray();
+    }
+
     private static uint GetCategoryIndex(string category)
     {
         var index = Array.FindIndex(CategoryNames, item => string.Equals(item, category, StringComparison.Ordinal));
         return index >= 0 ? (uint)index : 0;
+    }
+
+    private sealed record ImageChunks(byte[] Ihdr, IReadOnlyList<byte[]> Idats);
+
+    private sealed record PreservedChunks(IReadOnlyList<PNGChunk> BeforeIdat, IReadOnlyList<PNGChunk> AfterIdat)
+    {
+        public static PreservedChunks Empty { get; } = new([], []);
     }
 }

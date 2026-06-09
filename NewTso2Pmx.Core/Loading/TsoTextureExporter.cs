@@ -59,7 +59,7 @@ public static class TsoTextureExporter
         return count;
     }
 
-    private static Image<Rgba32> CreateImage(TSOTex texture)
+    public static Image<Rgba32> CreateImage(TSOTex texture)
     {
         var image = new Image<Rgba32>(texture.width, texture.height);
 
@@ -97,6 +97,38 @@ public static class TsoTextureExporter
         }
 
         return image;
+    }
+
+    public static void ReplaceTexture(TSOTex texture, string sourcePath)
+    {
+        ArgumentNullException.ThrowIfNull(texture);
+        ArgumentException.ThrowIfNullOrWhiteSpace(sourcePath);
+
+        using var image = Image.Load<Rgba32>(sourcePath);
+        if (image.Width <= 0 || image.Height <= 0)
+        {
+            throw new InvalidOperationException("Texture image has no pixels.");
+        }
+
+        var data = new byte[image.Width * image.Height * 4];
+        for (var y = 0; y < image.Height; y++)
+        {
+            for (var x = 0; x < image.Width; x++)
+            {
+                var pixel = image[x, y];
+                var offset = ((y * image.Width) + x) * 4;
+                data[offset] = pixel.B;
+                data[offset + 1] = pixel.G;
+                data[offset + 2] = pixel.R;
+                data[offset + 3] = pixel.A;
+            }
+        }
+
+        texture.width = image.Width;
+        texture.height = image.Height;
+        texture.depth = 4;
+        texture.data = data;
+        texture.FileName = $"\"{Path.GetFileName(sourcePath)}\"";
     }
 
     private static string SanitizeFileName(string value)

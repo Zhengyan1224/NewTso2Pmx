@@ -13,7 +13,8 @@ public sealed class LoadedDocument : IDisposable
         IReadOnlyList<FlatSubMeshInfo> subMeshes,
         IReadOnlyList<LoadedMaterialInfo> materials,
         int figureIndex = 0,
-        int figureCount = 1)
+        int figureCount = 1,
+        bool ownsFigure = true)
     {
         SourcePath = sourcePath;
         Kind = kind;
@@ -24,6 +25,7 @@ public sealed class LoadedDocument : IDisposable
         Materials = materials;
         FigureIndex = figureIndex;
         FigureCount = figureCount;
+        OwnsFigure = ownsFigure;
     }
 
     public string SourcePath { get; }
@@ -44,11 +46,16 @@ public sealed class LoadedDocument : IDisposable
 
     public int FigureCount { get; }
 
+    public bool OwnsFigure { get; }
+
     public IReadOnlyList<MeshGroupDescriptor> CreateMeshGroups(MeshGroupingMode mode)
         => MeshGrouping.Build(SubMeshes, mode);
 
     public void Dispose()
     {
-        Figure.Dispose();
+        if (OwnsFigure)
+        {
+            Figure.Dispose();
+        }
     }
 }

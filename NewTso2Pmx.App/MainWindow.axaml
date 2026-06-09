@@ -94,7 +94,7 @@
             Background="#E7EDF5"
             BorderBrush="#CCD6E3"
             BorderThickness="0,0,0,1">
-      <Grid ColumnDefinitions="*,Auto,Auto,Auto,Auto"
+      <Grid ColumnDefinitions="*,Auto,Auto,Auto,Auto,Auto"
             ColumnSpacing="8">
         <TextBox Grid.Column="0"
                  IsReadOnly="True"
@@ -110,6 +110,9 @@
                 Click="RefreshPreviewButton_OnClick"
                 Content="刷新预览" />
         <Button Grid.Column="4"
+                Click="ExportPreviewImageButton_OnClick"
+                Content="导出预览图" />
+        <Button Grid.Column="5"
                 Click="ExportButton_OnClick"
                 Content="导出 PMX" />
       </Grid>
@@ -383,11 +386,14 @@
                          AcceptsReturn="True"
                          Text="{Binding MaterialDetails}" />
                 <Grid Grid.Row="1"
-                      ColumnDefinitions="Auto,*"
+                      ColumnDefinitions="Auto,Auto,*"
                       ColumnSpacing="6">
                   <Button Grid.Column="0"
                           Click="CopyShaderDumpButton_OnClick"
                           Content="复制 Dump" />
+                  <Button Grid.Column="1"
+                          Click="ExportAllShaderDumpsButton_OnClick"
+                          Content="导出全部 Dump" />
                 </Grid>
                 <Grid Grid.Row="2"
                       ColumnDefinitions="120,180,90,90,90,90"
@@ -488,7 +494,7 @@
                 <ComboBox ItemsSource="{Binding Figures}"
                           SelectedItem="{Binding SelectedFigure}"
                           SelectionChanged="FigureComboBox_OnSelectionChanged" />
-                <Grid ColumnDefinitions="Auto,Auto,Auto,*"
+                <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,*"
                       ColumnSpacing="6">
                   <Button Grid.Column="0"
                           Click="ImportTmoButton_OnClick"
@@ -498,7 +504,25 @@
                           Content="导出 TMO" />
                   <Button Grid.Column="2"
                           Click="ExportTdcgPngButton_OnClick"
-                          Content="导出 PNG" />
+                          Content="导出当前 PNG" />
+                  <Button Grid.Column="3"
+                          Click="ImportPosePngButton_OnClick"
+                          Content="导入姿势 PNG" />
+                  <Button Grid.Column="4"
+                          Click="ExportPosePngButton_OnClick"
+                          Content="导出姿势 PNG" />
+                  <Button Grid.Column="5"
+                          Click="AppendFigureFromPngButton_OnClick"
+                          Content="追加 PNG Figure" />
+                  <Button Grid.Column="6"
+                          Click="ImportVmdButton_OnClick"
+                          Content="导入 VMD 为 TMO" />
+                  <Button Grid.Column="7"
+                          Click="ExportVpdButton_OnClick"
+                          Content="导出 VPD" />
+                  <Button Grid.Column="8"
+                          Click="RemoveCurrentFigureButton_OnClick"
+                          Content="删除 Figure" />
                 </Grid>
                 <Separator />
                 <TextBlock Text="TSO 顺序" />
@@ -516,7 +540,7 @@
                 <TextBlock Text="TSO 分类" />
                 <ComboBox ItemsSource="{Binding TdcgCategories}"
                           SelectedItem="{Binding SelectedTsoFile.Category, Mode=TwoWay}" />
-                <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,*"
+                <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,Auto,*"
                       ColumnSpacing="6">
                   <Button Grid.Column="0"
                           Click="MoveTsoUpButton_OnClick"
@@ -528,6 +552,9 @@
                           Click="AppendTsoButton_OnClick"
                           Content="追加 TSO" />
                   <Button Grid.Column="3"
+                          Click="ReplaceSelectedTsoButton_OnClick"
+                          Content="替换选中" />
+                  <Button Grid.Column="4"
                           Click="RemoveSelectedTsoButton_OnClick"
                           Content="移除选中" />
                 </Grid>
@@ -546,7 +573,56 @@
                           Click="ExportAllTsoTexturesButton_OnClick"
                           Content="导出全部贴图" />
                 </Grid>
+                <Separator />
+                <TextBlock Text="Textures" />
+                <Grid ColumnDefinitions="220,*"
+                      ColumnSpacing="8">
+                  <ListBox x:Name="TsoTextureListBox"
+                           MinHeight="132"
+                           MaxHeight="180"
+                           ItemsSource="{Binding TsoTextures}"
+                           SelectedItem="{Binding SelectedTsoTexture}"
+                           SelectionChanged="TsoTextureListBox_OnSelectionChanged">
+                    <ListBox.ItemTemplate>
+                      <DataTemplate>
+                        <TextBlock Text="{Binding DisplayText}" />
+                      </DataTemplate>
+                    </ListBox.ItemTemplate>
+                  </ListBox>
+                  <Grid Grid.Column="1"
+                        RowDefinitions="Auto,132,Auto"
+                        RowSpacing="6">
+                    <TextBox IsReadOnly="True"
+                             MinHeight="72"
+                             AcceptsReturn="True"
+                             TextWrapping="Wrap"
+                             Text="{Binding TextureDetails}" />
+                    <Border Grid.Row="1"
+                            Background="#E7EDF5"
+                            BorderBrush="#C7D0DC"
+                            BorderThickness="1">
+                      <Image Source="{Binding TexturePreview}"
+                             Stretch="Uniform" />
+                    </Border>
+                    <Button Grid.Row="2"
+                            HorizontalAlignment="Left"
+                            Click="ReplaceSelectedTsoTextureButton_OnClick"
+                            Content="替换选中贴图" />
+                  </Grid>
+                </Grid>
                 <TextBlock Text="SubScripts" />
+                <Grid ColumnDefinitions="Auto,Auto,Auto,*"
+                      ColumnSpacing="6">
+                  <Button Grid.Column="0"
+                          Click="ExportSelectedSubScriptButton_OnClick"
+                          Content="导出选中 SubScript" />
+                  <Button Grid.Column="1"
+                          Click="ExportAllSubScriptsButton_OnClick"
+                          Content="导出全部 SubScript" />
+                  <Button Grid.Column="2"
+                          Click="ImportSelectedSubScriptButton_OnClick"
+                          Content="导入替换 SubScript" />
+                </Grid>
                 <ListBox x:Name="TsoSubScriptListBox"
                          MinHeight="120"
                          ItemsSource="{Binding TsoSubScripts}"

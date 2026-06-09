@@ -84,11 +84,98 @@ public sealed class TsoDocumentLoader
             document.Figure,
             categories,
             document.FigureIndex,
-            document.FigureCount);
+            document.FigureCount,
+            document.OwnsFigure);
+    }
+
+    public LoadedFigureSession LoadSession(string sourcePath)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(sourcePath);
+
+        if (Directory.Exists(sourcePath))
+        {
+            return CreateSingleFigureSession(LoadDirectory(sourcePath));
+        }
+
+        var extension = Path.GetExtension(sourcePath).ToLowerInvariant();
+        return extension switch
+        {
+            ".tso" => CreateSingleFigureSession(LoadTso(sourcePath)),
+            ".png" => LoadPngSession(sourcePath),
+            _ => throw new NotSupportedException($"不支持的输入类型: {sourcePath}")
+        };
+    }
+
+    public LoadedFigureSession LoadSession(IReadOnlyList<string> sourcePaths)
+    {
+        ArgumentNullException.ThrowIfNull(sourcePaths);
+        return CreateSingleFigureSession(Load(sourcePaths));
+    }
+
+    public LoadedDocument CreateDocument(LoadedFigureSession session, int figureIndex)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        if (figureIndex < 0 || figureIndex >= session.Figures.Count)
+        {
+            throw new ArgumentOutOfRangeException(nameof(figureIndex));
+        }
+
+        var figure = session.Figures[figureIndex];
+        return CreateDocument(
+            session.SourcePath,
+            session.Kind,
+            figure.Figure,
+            figure.Categories,
+            figureIndex,
+            session.Figures.Count,
+            ownsFigure: false);
+    }
+
+    public TdcgPoseInfo LoadPosePng(string sourcePath)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(sourcePath);
+
+        var payload = LoadPngPayload(sourcePath);
+        if (!string.Equals(payload.Type, "POSE", StringComparison.Ordinal))
+        {
+            throw new InvalidDataException("PNG 不是 pose-only 姿势 PNG。");
+        }
+
+        if (payload.Tmo is null)
+        {
+            throw new InvalidDataException("姿势 PNG 不包含 FTMO 数据。");
+        }
+
+        return new TdcgPoseInfo(payload.Tmo, payload.LightDirection);
     }
 
     private LoadedDocument LoadTso(string sourcePath)
         => LoadTsoFiles([sourcePath], sourcePath, DocumentKind.TsoFile);
+
+    private static LoadedFigureSession CreateSingleFigureSession(LoadedDocument document)
+        => new(
+            document.SourcePath,
+            document.Kind,
+            [new LoadedFigureInfo(document.Figure, document.Categories)]);
+
+    private static LoadedFigureSession LoadPngSession(string sourcePath)
+    {
+        var payload = LoadPngPayload(sourcePath);
+        if (payload.Figures.Count == 0)
+        {
+            throw new InvalidDataException("PNG 中没有找到 Figure 数据。");
+        }
+
+        var figures = new List<LoadedFigureInfo>(payload.Figures.Count);
+        for (var index = 0; index < payload.Figures.Count; index++)
+        {
+            figures.Add(new LoadedFigureInfo(
+                payload.Figures[index],
+                GetPngCategories(sourcePath, payload.Figures, index)));
+        }
+
+        return new LoadedFigureSession(sourcePath, DocumentKind.SavePng, figures);
+    }
 
     private static LoadedDocument LoadTsoFiles(
         IReadOnlyList<string> files,
@@ -195,7 +282,8 @@ public sealed class TsoDocumentLoader
         Figure figure,
         IReadOnlyList<string> categories,
         int figureIndex = 0,
-        int figureCount = 1)
+        int figureCount = 1,
+        bool ownsFigure = true)
     {
         var tsoInfos = new List<LoadedTsoInfo>(figure.TSOList.Count);
         var materials = new List<LoadedMaterialInfo>();
@@ -259,7 +347,17 @@ public sealed class TsoDocumentLoader
             }
         }
 
-        return new LoadedDocument(sourcePath, kind, figure, categories, tsoInfos, subMeshes, materials, figureIndex, figureCount);
+        return new LoadedDocument(
+            sourcePath,
+            kind,
+            figure,
+            categories,
+            tsoInfos,
+            subMeshes,
+            materials,
+            figureIndex,
+            figureCount,
+            ownsFigure);
     }
     private static PngPayload LoadPngPayload(string sourcePath)
     {

@@ -30,6 +30,7 @@ public sealed class PreviewSceneBuilder
 
         var vertices = new List<PreviewVertex>();
         var indices = new List<uint>();
+        var drawBatches = new List<PreviewDrawBatch>();
         var min = new NumericsVector3(float.MaxValue, float.MaxValue, float.MaxValue);
         var max = new NumericsVector3(float.MinValue, float.MinValue, float.MinValue);
 
@@ -39,6 +40,7 @@ public sealed class PreviewSceneBuilder
             for (var scriptIndex = 0; scriptIndex < tso.sub_scripts.Length; scriptIndex++)
             {
                 var color = Palette[(tsoIndex + scriptIndex) % Palette.Length];
+                var batchStart = indices.Count;
                 foreach (var mesh in tso.meshes)
                 {
                     foreach (var subMesh in mesh.sub_meshes)
@@ -56,6 +58,15 @@ public sealed class PreviewSceneBuilder
                         AppendSubMesh(document.Figure, subMesh, color, vertices, indices, ref min, ref max);
                     }
                 }
+
+                var batchIndexCount = indices.Count - batchStart;
+                if (batchIndexCount > 0)
+                {
+                    drawBatches.Add(new PreviewDrawBatch(
+                        batchStart,
+                        batchIndexCount,
+                        CreatePreviewTexture(tso, GetColorTextureName(tso.sub_scripts[scriptIndex]))));
+                }
             }
         }
 
@@ -65,7 +76,7 @@ public sealed class PreviewSceneBuilder
         }
 
         var center = (min + max) * 0.5f;
-        return new PreviewSceneData(vertices, indices, center, min, max);
+        return new PreviewSceneData(vertices, indices, drawBatches, center, min, max);
     }
 
     private static void AppendSubMesh(
@@ -101,7 +112,8 @@ public sealed class PreviewSceneBuilder
             var previewVertex = new PreviewVertex(
                 new NumericsVector3(position.X, position.Y, position.Z),
                 new NumericsVector3(normalized.X, normalized.Y, normalized.Z),
-                color);
+                color,
+                new System.Numerics.Vector2(vertex.u, 1.0f - vertex.v));
 
             localVertices.Add(previewVertex);
             vertices.Add(previewVertex);
@@ -160,5 +172,52 @@ public sealed class PreviewSceneBuilder
         }
 
         return clippedBoneMatrices;
+    }
+
+    private static string? GetColorTextureName(TSOSubScript subScript)
+    {
+        try
+        {
+            return subScript.shader.ColorTexName;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static PreviewTextureData? CreatePreviewTexture(TSOFile tso, string? textureName)
+    {
+        if (string.IsNullOrWhiteSpace(textureName))
+        {
+            return null;
+        }
+
+        var texture = tso.textures.FirstOrDefault(item =>
+            string.Equals(item.Name, textureName, StringComparison.Ordinal));
+        if (texture is null ||
+            texture.width <= 0 ||
+            texture.height <= 0 ||
+            texture.depth < 3 ||
+            texture.data.Length < texture.width * texture.height * texture.depth)
+        {
+            return null;
+        }
+
+        var rgba = new byte[texture.width * texture.height * 4];
+        var destination = 0;
+        for (var y = texture.height - 1; y >= 0; y--)
+        {
+            var source = y * texture.width * texture.depth;
+            for (var x = 0; x < texture.width; x++)
+            {
+                rgba[destination++] = texture.data[source++];
+                rgba[destination++] = texture.data[source++];
+                rgba[destination++] = texture.data[source++];
+                rgba[destination++] = texture.depth >= 4 ? texture.data[source++] : (byte)255;
+            }
+        }
+
+        return new PreviewTextureData(texture.Name, texture.width, texture.height, rgba);
     }
 }

@@ -9,11 +9,15 @@ using Avalonia.Controls.Primitives;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Markup.Xaml;
+using Avalonia.Media.Imaging;
 using Avalonia.Platform.Storage;
+using NewTso2Pmx.App.Configuration;
 using NewTso2Pmx.App.ViewModels;
 using NewTso2Pmx.Core.Infrastructure;
 using NewTso2Pmx.Core.Loading;
 using NewTso2Pmx.Core.Preview;
+using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.PixelFormats;
 using TDCG;
 using Tso2Pmd;
 
@@ -27,6 +31,7 @@ public partial class MainWindow : Window
     private readonly TemplateList _templateList = new();
     private readonly CorrespondTableList _correspondTableList = new();
     private readonly Morphing _morphing = new();
+    private readonly AppSettings _settings;
     private readonly Dictionary<string, float> _proportionRatios = new(StringComparer.Ordinal);
     private readonly MeshGroupingOption[] _meshGroupingOptions =
     [
@@ -36,15 +41,22 @@ public partial class MainWindow : Window
     ];
 
     private ComboBox _meshGroupingComboBox = null!;
+    private LoadedFigureSession? _loadedSession;
     private LoadedDocument? _loadedDocument;
     private bool[] _selectedSubMeshes = [];
     private bool _isUpdatingSelectedProportion;
     private bool _isUpdatingFigureSliders;
     private bool _isUpdatingMorphs;
     private bool _isUpdatingTsoFiles;
+    private bool _isUpdatingFigures;
+    private bool _isApplyingSettings;
+
+    private const string RecentInputDirectoryKey = "Input";
+    private const string RecentOutputDirectoryKey = "Output";
 
     public MainWindow()
     {
+        _settings = AppSettingsStore.Load();
         InitializeComponent();
         DataContext = _viewModel;
 
@@ -53,6 +65,7 @@ public partial class MainWindow : Window
 
         ConfigureMeshGroupingOptions();
         InitializeRuntimeResources();
+        SubscribeSettingsChanges();
     }
 
     private void InitializeComponent()
@@ -62,8 +75,11 @@ public partial class MainWindow : Window
 
     protected override void OnClosed(EventArgs e)
     {
+        SaveSettingsFromViewModel();
         _loadedDocument?.Dispose();
         _loadedDocument = null;
+        _loadedSession?.Dispose();
+        _loadedSession = null;
         base.OnClosed(e);
     }
 
@@ -88,6 +104,7 @@ public partial class MainWindow : Window
             InitializeMorphs();
             ResetProportionRatios(includePackagedConfig: true);
             PopulateProportionViewModels();
+            ApplySettingsToViewModel();
 
             _viewModel.StatusMessage = "就绪：请选择 .tso、.png 或包含 TSO 的目录。";
         }
@@ -161,6 +178,316 @@ public partial class MainWindow : Window
         _viewModel.SelectedHairTemplate = _viewModel.HairTemplates.FirstOrDefault();
         _viewModel.SelectedChestTemplate = _viewModel.ChestTemplates.FirstOrDefault();
         _viewModel.SelectedSkirtTemplate = _viewModel.SkirtTemplates.FirstOrDefault();
+    }
+
+    private void ApplySettingsToViewModel()
+    {
+        _isApplyingSettings = true;
+        try
+        {
+            _viewModel.Comment = _settings.Comment;
+            _viewModel.CustomOutputFolder = _settings.CustomOutputFolder;
+            _viewModel.OutputCreateSubfolder = _settings.OutputMode == AppOutputModes.CreateSubfolder;
+            _viewModel.OutputUseSourceFolder = _settings.OutputMode == AppOutputModes.SourceFolder;
+            _viewModel.OutputUseCustomFolder = _settings.OutputMode == AppOutputModes.CustomFolder;
+            _viewModel.UseHumanBone = _settings.UseHumanBone;
+            _viewModel.UseSpheremap = _settings.UseSpheremap;
+            _viewModel.UseEdge = _settings.UseEdge;
+            _viewModel.UniqueMaterial = _settings.UniqueMaterial;
+            _viewModel.EnableHairPhysics = _settings.EnableHairPhysics;
+            _viewModel.EnableChestPhysics = _settings.EnableChestPhysics;
+            _viewModel.EnableSkirtPhysics = _settings.EnableSkirtPhysics;
+
+            ApplyCollectionSelection(_viewModel.BoneTables, _settings.BoneTableSelection);
+            ApplyCollectionSelection(_viewModel.ExtraPhysicsTemplates, _settings.ExtraPhysicsSelection);
+            SelectTemplateIfPresent(_viewModel.HairTemplates, _settings.SelectedHairTemplate, value => _viewModel.SelectedHairTemplate = value);
+            SelectTemplateIfPresent(_viewModel.ChestTemplates, _settings.SelectedChestTemplate, value => _viewModel.SelectedChestTemplate = value);
+            SelectTemplateIfPresent(_viewModel.SkirtTemplates, _settings.SelectedSkirtTemplate, value => _viewModel.SelectedSkirtTemplate = value);
+
+            var grouping = _meshGroupingOptions.FirstOrDefault(option => option.Mode == _settings.MeshGroupingMode)
+                           ?? _meshGroupingOptions[0];
+            _meshGroupingComboBox.SelectedItem = grouping;
+            _viewModel.SelectedMeshGroupingMode = grouping.Mode;
+        }
+        finally
+        {
+            _isApplyingSettings = false;
+        }
+    }
+
+    private static void ApplyCollectionSelection(
+        IEnumerable<SelectableItemViewModel> items,
+        IReadOnlyDictionary<string, bool> selections)
+    {
+        foreach (var item in items)
+        {
+            if (selections.TryGetValue(item.Key, out var isSelected))
+            {
+                item.IsSelected = isSelected;
+            }
+        }
+    }
+
+    private static void SelectTemplateIfPresent(
+        IEnumerable<string> templates,
+        string? selectedTemplate,
+        Action<string?> apply)
+    {
+        if (!string.IsNullOrWhiteSpace(selectedTemplate) &&
+            templates.Contains(selectedTemplate, StringComparer.Ordinal))
+        {
+            apply(selectedTemplate);
+        }
+    }
+
+    private void SubscribeSettingsChanges()
+    {
+        _viewModel.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName is nameof(MainWindowViewModel.StatusMessage) or
+                nameof(MainWindowViewModel.SourcePath) or
+                nameof(MainWindowViewModel.ModelName) or
+                nameof(MainWindowViewModel.DocumentSummary) or
+                nameof(MainWindowViewModel.MaterialDetails) or
+                nameof(MainWindowViewModel.PreviewSummary) or
+                nameof(MainWindowViewModel.TextureDetails) or
+                nameof(MainWindowViewModel.TexturePreview) or
+                nameof(MainWindowViewModel.PreviewScene) or
+                nameof(MainWindowViewModel.SelectedMaterial) or
+                nameof(MainWindowViewModel.SelectedTsoFile) or
+                nameof(MainWindowViewModel.SelectedTsoSubScript) or
+                nameof(MainWindowViewModel.SelectedTsoTexture) or
+                nameof(MainWindowViewModel.SelectedFigure) or
+                nameof(MainWindowViewModel.SelectedProportion) or
+                nameof(MainWindowViewModel.SelectedProportionValue))
+            {
+                return;
+            }
+
+            SaveSettingsFromViewModel();
+        };
+
+        foreach (var item in _viewModel.BoneTables)
+        {
+            item.PropertyChanged += (_, e) =>
+            {
+                if (e.PropertyName == nameof(SelectableItemViewModel.IsSelected))
+                {
+                    SaveSettingsFromViewModel();
+                }
+            };
+        }
+
+        foreach (var item in _viewModel.ExtraPhysicsTemplates)
+        {
+            item.PropertyChanged += (_, e) =>
+            {
+                if (e.PropertyName == nameof(SelectableItemViewModel.IsSelected))
+                {
+                    SaveSettingsFromViewModel();
+                }
+            };
+        }
+    }
+
+    private void SaveSettingsFromViewModel()
+    {
+        if (_isApplyingSettings)
+        {
+            return;
+        }
+
+        _settings.Comment = _viewModel.Comment;
+        _settings.CustomOutputFolder = _viewModel.CustomOutputFolder;
+        _settings.OutputMode = _viewModel.OutputUseCustomFolder
+            ? AppOutputModes.CustomFolder
+            : _viewModel.OutputUseSourceFolder
+                ? AppOutputModes.SourceFolder
+                : AppOutputModes.CreateSubfolder;
+        _settings.UseHumanBone = _viewModel.UseHumanBone;
+        _settings.UseSpheremap = _viewModel.UseSpheremap;
+        _settings.UseEdge = _viewModel.UseEdge;
+        _settings.UniqueMaterial = _viewModel.UniqueMaterial;
+        _settings.EnableHairPhysics = _viewModel.EnableHairPhysics;
+        _settings.EnableChestPhysics = _viewModel.EnableChestPhysics;
+        _settings.EnableSkirtPhysics = _viewModel.EnableSkirtPhysics;
+        _settings.SelectedHairTemplate = _viewModel.SelectedHairTemplate;
+        _settings.SelectedChestTemplate = _viewModel.SelectedChestTemplate;
+        _settings.SelectedSkirtTemplate = _viewModel.SelectedSkirtTemplate;
+        _settings.MeshGroupingMode = _viewModel.SelectedMeshGroupingMode;
+        _settings.BoneTableSelection = _viewModel.BoneTables.ToDictionary(item => item.Key, item => item.IsSelected, StringComparer.Ordinal);
+        _settings.ExtraPhysicsSelection = _viewModel.ExtraPhysicsTemplates.ToDictionary(item => item.Key, item => item.IsSelected, StringComparer.Ordinal);
+
+        try
+        {
+            AppSettingsStore.Save(_settings);
+        }
+        catch
+        {
+            // Settings persistence should not block conversion or editing workflows.
+        }
+    }
+
+    private async Task<IStorageFolder?> GetSuggestedStartLocationAsync(string recentKey)
+    {
+        if (_settings.RecentDirectories.TryGetValue(recentKey, out var recentDirectory) &&
+            Directory.Exists(recentDirectory))
+        {
+            try
+            {
+                return await StorageProvider.TryGetFolderFromPathAsync(recentDirectory);
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        return null;
+    }
+
+    private async Task<IReadOnlyList<IStorageFile>> OpenFilePickerWithRecentAsync(
+        FilePickerOpenOptions options,
+        string recentKey)
+    {
+        options.SuggestedStartLocation ??= await GetSuggestedStartLocationAsync(recentKey);
+        var files = await StorageProvider.OpenFilePickerAsync(options);
+        RememberRecentDirectory(recentKey, files.FirstOrDefault()?.TryGetLocalPath());
+        return files;
+    }
+
+    private async Task<IStorageFile?> SaveFilePickerWithRecentAsync(
+        FilePickerSaveOptions options,
+        string recentKey)
+    {
+        options.SuggestedStartLocation ??= await GetSuggestedStartLocationAsync(recentKey);
+        var file = await StorageProvider.SaveFilePickerAsync(options);
+        RememberRecentDirectory(recentKey, file?.TryGetLocalPath());
+        return file;
+    }
+
+    private async Task<IReadOnlyList<IStorageFolder>> OpenFolderPickerWithRecentAsync(
+        FolderPickerOpenOptions options,
+        string recentKey)
+    {
+        options.SuggestedStartLocation ??= await GetSuggestedStartLocationAsync(recentKey);
+        var folders = await StorageProvider.OpenFolderPickerAsync(options);
+        RememberRecentDirectory(recentKey, folders.FirstOrDefault()?.TryGetLocalPath());
+        return folders;
+    }
+
+    private void RememberRecentDirectory(string recentKey, string? path)
+    {
+        var directory = TryGetDirectory(path);
+        if (string.IsNullOrWhiteSpace(directory))
+        {
+            return;
+        }
+
+        _settings.RecentDirectories[recentKey] = directory;
+        SaveSettingsFromViewModel();
+    }
+
+    private static string? TryGetDirectory(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return null;
+        }
+
+        try
+        {
+            return Directory.Exists(path)
+                ? path
+                : Path.GetDirectoryName(path);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private LoadedDocument RestoreEditSessionIfMatching(LoadedDocument document, string displaySourcePath)
+    {
+        var session = _settings.EditSession;
+        if (!IsSameSessionSource(session.SourcePath, displaySourcePath))
+        {
+            return document;
+        }
+
+        if (session.SelectedSubMeshes.Count == document.SubMeshes.Count)
+        {
+            _selectedSubMeshes = session.SelectedSubMeshes.ToArray();
+        }
+
+        if (session.TsoCategories.Count == document.TsoFiles.Count)
+        {
+            var categories = document.Categories.ToList();
+            for (var index = 0; index < document.TsoFiles.Count; index++)
+            {
+                var category = session.TsoCategories[index];
+                if (string.IsNullOrWhiteSpace(category))
+                {
+                    continue;
+                }
+
+                if (index < categories.Count)
+                {
+                    categories[index] = category;
+                }
+                else
+                {
+                    categories.Add(category);
+                }
+            }
+
+            _loadedDocument = _documentLoader.Rebuild(document, categories);
+            document = _loadedDocument;
+            SyncCurrentSessionCategories(categories);
+        }
+
+        return document;
+    }
+
+    private void RestoreEditSessionSelectionIfMatching(string displaySourcePath)
+    {
+        var session = _settings.EditSession;
+        if (!IsSameSessionSource(session.SourcePath, displaySourcePath))
+        {
+            return;
+        }
+
+        _viewModel.SelectedTsoFile = _viewModel.TsoFiles.FirstOrDefault(item => item.Index == session.SelectedTsoIndex)
+            ?? _viewModel.TsoFiles.FirstOrDefault();
+        PopulateTsoSubScripts(_viewModel.SelectedTsoFile);
+        PopulateTsoTextures(_viewModel.SelectedTsoFile);
+    }
+
+    private void SaveEditSessionSnapshot()
+    {
+        if (_loadedDocument is null)
+        {
+            return;
+        }
+
+        _settings.EditSession.SourcePath = _loadedDocument.SourcePath;
+        _settings.EditSession.FigureIndex = _loadedDocument.FigureIndex;
+        _settings.EditSession.SelectedTsoIndex = _viewModel.SelectedTsoFile?.Index ?? 0;
+        _settings.EditSession.TsoCategories = _viewModel.TsoFiles.Count > 0
+            ? _viewModel.TsoFiles.OrderBy(item => item.Index).Select(item => item.Category).ToList()
+            : _loadedDocument.Categories.ToList();
+        _settings.EditSession.SelectedSubMeshes = _selectedSubMeshes.ToList();
+        SaveSettingsFromViewModel();
+    }
+
+    private static bool IsSameSessionSource(string? savedSourcePath, string currentSourcePath)
+    {
+        if (string.IsNullOrWhiteSpace(savedSourcePath) || string.IsNullOrWhiteSpace(currentSourcePath))
+        {
+            return false;
+        }
+
+        return string.Equals(savedSourcePath, currentSourcePath, StringComparison.OrdinalIgnoreCase);
     }
 
     private void ResetProportionRatios(bool includePackagedConfig)
@@ -238,42 +565,24 @@ public partial class MainWindow : Window
 
         try
         {
-            var document = await Task.Run(() => _documentLoader.Load(sourcePath, figureIndex));
+            var session = await Task.Run(() => _documentLoader.LoadSession(sourcePath));
+            var resolvedFigureIndex = IsSameSessionSource(_settings.EditSession.SourcePath, sourcePath)
+                ? Math.Clamp(_settings.EditSession.FigureIndex, 0, session.Figures.Count - 1)
+                : figureIndex;
+            var document = _documentLoader.CreateDocument(session, resolvedFigureIndex);
 
             _loadedDocument?.Dispose();
+            _loadedSession?.Dispose();
+            _loadedSession = session;
             _loadedDocument = document;
-            _selectedSubMeshes = Enumerable.Repeat(true, document.SubMeshes.Count).ToArray();
-
-            _viewModel.SourcePath = sourcePath;
-            _viewModel.ModelName = SuggestModelName(sourcePath);
-            _viewModel.DocumentSummary = BuildDocumentSummary(document);
-            PopulateMaterials(document);
-            PopulateTsoFiles(document);
-            PopulateFigureOptions(document);
-            PopulateFigureSliders(document);
-            ResetMorphRatios();
-
-            ApplyCurrentProportionsToFigure();
-            RebuildMeshGroups();
-            RefreshPreviewScene();
+            SetActiveDocument(document, sourcePath);
+            SaveEditSessionSnapshot();
 
             _viewModel.StatusMessage = $"已加载：{document.SubMeshes.Count} 个子网格，{document.Materials.Count} 个材质。";
         }
         catch (Exception ex)
         {
-            _loadedDocument?.Dispose();
-            _loadedDocument = null;
-            _selectedSubMeshes = [];
-            _viewModel.PreviewScene = PreviewSceneData.Empty;
-            _viewModel.Materials.Clear();
-            _viewModel.ShaderParameters.Clear();
-            _viewModel.TsoFiles.Clear();
-            _viewModel.TsoSubScripts.Clear();
-            _viewModel.Figures.Clear();
-            _viewModel.MeshGroups.Clear();
-            _viewModel.MaterialDetails = string.Empty;
-            _viewModel.DocumentSummary = "尚未加载模型。";
-            _viewModel.PreviewSummary = "预览等待数据。";
+            ClearLoadedState();
             _viewModel.StatusMessage = $"加载失败：{ex.Message}";
         }
     }
@@ -298,45 +607,74 @@ public partial class MainWindow : Window
 
         try
         {
-            var document = await Task.Run(() => _documentLoader.Load(paths));
+            var session = await Task.Run(() => _documentLoader.LoadSession(paths));
+            var document = _documentLoader.CreateDocument(session, 0);
 
             _loadedDocument?.Dispose();
+            _loadedSession?.Dispose();
+            _loadedSession = session;
             _loadedDocument = document;
-            _selectedSubMeshes = Enumerable.Repeat(true, document.SubMeshes.Count).ToArray();
-
-            _viewModel.SourcePath = string.Join("; ", paths);
-            _viewModel.ModelName = SuggestModelName(paths[0]);
-            _viewModel.DocumentSummary = BuildDocumentSummary(document);
-            PopulateMaterials(document);
-            PopulateTsoFiles(document);
-            PopulateFigureOptions(document);
-            PopulateFigureSliders(document);
-            ResetMorphRatios();
-
-            ApplyCurrentProportionsToFigure();
-            RebuildMeshGroups();
-            RefreshPreviewScene();
+            SetActiveDocument(document, string.Join("; ", paths), paths[0]);
+            SaveEditSessionSnapshot();
 
             _viewModel.StatusMessage =
                 $"已加载：{document.TsoFiles.Count} 个 TSO，{document.SubMeshes.Count} 个子网格，{document.Materials.Count} 个材质。";
         }
         catch (Exception ex)
         {
-            _loadedDocument?.Dispose();
-            _loadedDocument = null;
-            _selectedSubMeshes = [];
-            _viewModel.PreviewScene = PreviewSceneData.Empty;
-            _viewModel.Materials.Clear();
-            _viewModel.ShaderParameters.Clear();
-            _viewModel.TsoFiles.Clear();
-            _viewModel.TsoSubScripts.Clear();
-            _viewModel.Figures.Clear();
-            _viewModel.MeshGroups.Clear();
-            _viewModel.MaterialDetails = string.Empty;
-            _viewModel.DocumentSummary = "尚未加载模型。";
-            _viewModel.PreviewSummary = "预览等待数据。";
+            ClearLoadedState();
             _viewModel.StatusMessage = $"加载失败：{ex.Message}";
         }
+    }
+
+    private void SetActiveDocument(
+        LoadedDocument document,
+        string displaySourcePath,
+        string? modelSourcePath = null,
+        bool resetModelName = true)
+    {
+        _selectedSubMeshes = Enumerable.Repeat(true, document.SubMeshes.Count).ToArray();
+
+        _viewModel.SourcePath = displaySourcePath;
+        if (resetModelName)
+        {
+            _viewModel.ModelName = SuggestModelName(modelSourcePath ?? displaySourcePath);
+        }
+
+        document = RestoreEditSessionIfMatching(document, document.SourcePath);
+        _viewModel.DocumentSummary = BuildDocumentSummary(document);
+        PopulateMaterials(document);
+        PopulateTsoFiles(document);
+        RestoreEditSessionSelectionIfMatching(document.SourcePath);
+        PopulateFigureOptions(document);
+        PopulateFigureSliders(document);
+        ResetMorphRatios();
+
+        ApplyCurrentProportionsToFigure();
+        RebuildMeshGroups();
+        RefreshPreviewScene();
+    }
+
+    private void ClearLoadedState()
+    {
+        _loadedDocument?.Dispose();
+        _loadedDocument = null;
+        _loadedSession?.Dispose();
+        _loadedSession = null;
+        _selectedSubMeshes = [];
+        _viewModel.PreviewScene = PreviewSceneData.Empty;
+        _viewModel.Materials.Clear();
+        _viewModel.ShaderParameters.Clear();
+        _viewModel.TsoFiles.Clear();
+        _viewModel.TsoSubScripts.Clear();
+        _viewModel.TsoTextures.Clear();
+        _viewModel.Figures.Clear();
+        _viewModel.MeshGroups.Clear();
+        _viewModel.MaterialDetails = string.Empty;
+        _viewModel.TextureDetails = string.Empty;
+        SetTexturePreview(null);
+        _viewModel.DocumentSummary = "尚未加载模型。";
+        _viewModel.PreviewSummary = "预览等待数据。";
     }
 
     private void PopulateMaterials(LoadedDocument document)
@@ -374,6 +712,7 @@ public partial class MainWindow : Window
         }
 
         PopulateTsoSubScripts(_viewModel.SelectedTsoFile);
+        PopulateTsoTextures(_viewModel.SelectedTsoFile);
     }
 
     private void TsoFileViewModelOnPropertyChanged(
@@ -413,15 +752,46 @@ public partial class MainWindow : Window
         _viewModel.SelectedTsoSubScript = _viewModel.TsoSubScripts.FirstOrDefault();
     }
 
-    private void PopulateFigureOptions(LoadedDocument document)
+    private void PopulateTsoTextures(TsoFileViewModel? tsoFile)
     {
-        _viewModel.Figures.Clear();
-        for (var index = 0; index < document.FigureCount; index++)
+        _viewModel.TsoTextures.Clear();
+        if (tsoFile is null)
         {
-            _viewModel.Figures.Add(new FigureOptionViewModel(index));
+            _viewModel.SelectedTsoTexture = null;
+            _viewModel.TextureDetails = string.Empty;
+            SetTexturePreview(null);
+            return;
         }
 
-        _viewModel.SelectedFigure = _viewModel.Figures.FirstOrDefault(item => item.Index == document.FigureIndex);
+        for (var index = 0; index < tsoFile.Source.Tso.textures.Length; index++)
+        {
+            _viewModel.TsoTextures.Add(new TsoTextureViewModel(
+                tsoFile.Index,
+                index,
+                tsoFile.Source.Tso.textures[index]));
+        }
+
+        _viewModel.SelectedTsoTexture = _viewModel.TsoTextures.FirstOrDefault();
+        UpdateTexturePreview(_viewModel.SelectedTsoTexture);
+    }
+
+    private void PopulateFigureOptions(LoadedDocument document)
+    {
+        _isUpdatingFigures = true;
+        try
+        {
+            _viewModel.Figures.Clear();
+            for (var index = 0; index < document.FigureCount; index++)
+            {
+                _viewModel.Figures.Add(new FigureOptionViewModel(index));
+            }
+
+            _viewModel.SelectedFigure = _viewModel.Figures.FirstOrDefault(item => item.Index == document.FigureIndex);
+        }
+        finally
+        {
+            _isUpdatingFigures = false;
+        }
     }
 
     private void RebuildLoadedDocument(IReadOnlyList<string> categories)
@@ -432,6 +802,7 @@ public partial class MainWindow : Window
         }
 
         _loadedDocument = _documentLoader.Rebuild(_loadedDocument, categories);
+        SyncCurrentSessionCategories(categories);
         _selectedSubMeshes = Enumerable.Repeat(true, _loadedDocument.SubMeshes.Count).ToArray();
 
         _viewModel.DocumentSummary = BuildDocumentSummary(_loadedDocument);
@@ -443,6 +814,24 @@ public partial class MainWindow : Window
         ApplyCurrentProportionsToFigure();
         RebuildMeshGroups();
         RefreshPreviewScene();
+        SaveEditSessionSnapshot();
+    }
+
+    private void SyncCurrentSessionCategories(IReadOnlyList<string> categories)
+    {
+        if (_loadedSession is null || _loadedDocument is null)
+        {
+            return;
+        }
+
+        if (_loadedDocument.FigureIndex < 0 || _loadedDocument.FigureIndex >= _loadedSession.Figures.Count)
+        {
+            return;
+        }
+
+        var target = _loadedSession.Figures[_loadedDocument.FigureIndex].Categories;
+        target.Clear();
+        target.AddRange(categories);
     }
 
     private void RefreshCurrentDocument(IReadOnlyList<string> categories, int? selectedTsoIndex = null)
@@ -460,7 +849,10 @@ public partial class MainWindow : Window
             _viewModel.SelectedTsoFile = _viewModel.TsoFiles.FirstOrDefault(item => item.Index == selectedTsoIndex.Value)
                 ?? _viewModel.TsoFiles.LastOrDefault();
             PopulateTsoSubScripts(_viewModel.SelectedTsoFile);
+            PopulateTsoTextures(_viewModel.SelectedTsoFile);
         }
+
+        SaveEditSessionSnapshot();
     }
 
     private void ApplyTsoCategory(TsoFileViewModel changedTsoFile)
@@ -480,6 +872,8 @@ public partial class MainWindow : Window
         RebuildLoadedDocument(categories);
         _viewModel.SelectedTsoFile = _viewModel.TsoFiles.FirstOrDefault(item => item.Index == changedTsoFile.Index);
         PopulateTsoSubScripts(_viewModel.SelectedTsoFile);
+        PopulateTsoTextures(_viewModel.SelectedTsoFile);
+        SaveEditSessionSnapshot();
         _viewModel.StatusMessage = $"TSO 分类已更新：{changedTsoFile.Category}";
     }
 
@@ -578,13 +972,72 @@ public partial class MainWindow : Window
         }
     }
 
+    private async void ExportAllShaderDumpsButton_OnClick(object? sender, RoutedEventArgs e)
+    {
+        if (_loadedDocument is null || _viewModel.Materials.Count == 0)
+        {
+            _viewModel.StatusMessage = "请先加载模型。";
+            return;
+        }
+
+        if (!StorageProvider.CanSave)
+        {
+            _viewModel.StatusMessage = "当前平台不支持保存文件选择器。";
+            return;
+        }
+
+        var textType = CreateTextFileType();
+        var file = await SaveFilePickerWithRecentAsync(new FilePickerSaveOptions
+        {
+            Title = "保存全部 Shader Dump",
+            SuggestedFileName = $"{GetSourceBaseName(_loadedDocument.SourcePath)}_shader_dump.txt",
+            DefaultExtension = "txt",
+            ShowOverwritePrompt = true,
+            FileTypeChoices =
+            [
+                textType
+            ],
+            SuggestedFileType = textType
+        }, RecentOutputDirectoryKey);
+
+        if (file is null)
+        {
+            return;
+        }
+
+        try
+        {
+            var dump = BuildAllShaderDumps(_viewModel.Materials);
+            await using var stream = await file.OpenWriteAsync();
+            await using var writer = new StreamWriter(stream, new UTF8Encoding(false));
+            await writer.WriteAsync(dump);
+            _viewModel.StatusMessage = $"已导出 Shader Dump：{file.TryGetLocalPath() ?? file.Name}";
+        }
+        catch (Exception ex)
+        {
+            _viewModel.StatusMessage = $"导出 Shader Dump 失败：{ex.Message}";
+        }
+    }
+
     private static string BuildShaderDump(MaterialViewModel material)
     {
         var builder = new StringBuilder();
         builder.AppendLine("-- dump shader parameters --");
+        builder.AppendLine($"TSO {material.Source.TsoIndex}");
+        builder.AppendLine($"MaterialIndex {material.Source.MaterialIndex}");
         builder.AppendLine($"Category {material.Source.Category}");
         builder.AppendLine($"Material {material.Source.MaterialName}");
         builder.AppendLine($"Script {material.Source.ScriptFileName}");
+        builder.AppendLine();
+        builder.AppendLine("-- shader lines --");
+
+        foreach (var line in material.Source.Shader.GetLines())
+        {
+            builder.AppendLine(line);
+        }
+
+        builder.AppendLine();
+        builder.AppendLine("-- shader parameters --");
 
         foreach (var parameter in material.Source.Shader.shader_parameters)
         {
@@ -593,6 +1046,39 @@ public partial class MainWindow : Window
         }
 
         return builder.ToString().TrimEnd();
+    }
+
+    private static string BuildAllShaderDumps(IEnumerable<MaterialViewModel> materials)
+    {
+        var builder = new StringBuilder();
+        foreach (var material in materials.OrderBy(item => item.Source.TsoIndex).ThenBy(item => item.Source.MaterialIndex))
+        {
+            if (builder.Length > 0)
+            {
+                builder.AppendLine();
+                builder.AppendLine();
+            }
+
+            builder.AppendLine(BuildShaderDump(material));
+        }
+
+        return builder.ToString().TrimEnd();
+    }
+
+    private void SaveCurrentShaderEdits()
+    {
+        if (_loadedDocument is null)
+        {
+            return;
+        }
+
+        foreach (var tso in _loadedDocument.Figure.TSOList)
+        {
+            foreach (var subScript in tso.sub_scripts)
+            {
+                subScript.SaveShader();
+            }
+        }
     }
 
     private void PopulateFigureSliders(LoadedDocument document)
@@ -643,6 +1129,7 @@ public partial class MainWindow : Window
         }
 
         RefreshPreviewScene();
+        SaveEditSessionSnapshot();
     }
 
     private void ApplyCurrentProportionsToFigure()
@@ -809,7 +1296,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+        var files = await OpenFilePickerWithRecentAsync(new FilePickerOpenOptions
         {
             Title = "选择 TSO 或 PNG 文件",
             AllowMultiple = true,
@@ -820,7 +1307,7 @@ public partial class MainWindow : Window
                     Patterns = ["*.tso", "*.TSO", "*.png"]
                 }
             ]
-        });
+        }, RecentInputDirectoryKey);
 
         var paths = files
             .Select(file => file.TryGetLocalPath())
@@ -841,11 +1328,11 @@ public partial class MainWindow : Window
             return;
         }
 
-        var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
+        var folders = await OpenFolderPickerWithRecentAsync(new FolderPickerOpenOptions
         {
             Title = "选择包含 TSO 的目录",
             AllowMultiple = false
-        });
+        }, RecentInputDirectoryKey);
 
         var path = folders.FirstOrDefault()?.TryGetLocalPath();
         if (!string.IsNullOrWhiteSpace(path))
@@ -862,17 +1349,18 @@ public partial class MainWindow : Window
             return;
         }
 
-        var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
+        var folders = await OpenFolderPickerWithRecentAsync(new FolderPickerOpenOptions
         {
             Title = "选择输出目录",
             AllowMultiple = false
-        });
+        }, RecentOutputDirectoryKey);
 
         var path = folders.FirstOrDefault()?.TryGetLocalPath();
         if (!string.IsNullOrWhiteSpace(path))
         {
             _viewModel.CustomOutputFolder = path;
             _viewModel.OutputUseCustomFolder = true;
+            SaveSettingsFromViewModel();
         }
     }
 
@@ -880,6 +1368,63 @@ public partial class MainWindow : Window
     {
         ApplyFigureSlidersAndRefreshPreview();
         _viewModel.StatusMessage = "预览已刷新。";
+    }
+
+    private async void ExportPreviewImageButton_OnClick(object? sender, RoutedEventArgs e)
+    {
+        if (_loadedDocument is null || _viewModel.PreviewScene is null || _viewModel.PreviewScene.IsEmpty)
+        {
+            _viewModel.StatusMessage = "当前没有可导出的预览画面。";
+            return;
+        }
+
+        if (!StorageProvider.CanSave)
+        {
+            _viewModel.StatusMessage = "当前平台不支持保存文件选择器。";
+            return;
+        }
+
+        var pngType = CreatePngFileType();
+        var file = await SaveFilePickerWithRecentAsync(new FilePickerSaveOptions
+        {
+            Title = "保存预览 PNG",
+            SuggestedFileName = $"{GetSourceBaseName(_loadedDocument.SourcePath)}_preview.png",
+            DefaultExtension = "png",
+            ShowOverwritePrompt = true,
+            FileTypeChoices =
+            [
+                pngType
+            ],
+            SuggestedFileType = pngType
+        }, RecentOutputDirectoryKey);
+
+        if (file is null)
+        {
+            return;
+        }
+
+        try
+        {
+            var capture = await PreviewControl.CaptureFrameAsync();
+            if (capture is null)
+            {
+                _viewModel.StatusMessage = "预览画面尚未初始化，无法导出。";
+                return;
+            }
+
+            using var image = SixLabors.ImageSharp.Image.LoadPixelData<Rgba32>(
+                capture.RgbaPixels,
+                capture.Width,
+                capture.Height);
+            await using var stream = await file.OpenWriteAsync();
+            await image.SaveAsPngAsync(stream);
+
+            _viewModel.StatusMessage = $"已导出预览 PNG：{file.TryGetLocalPath() ?? file.Name}";
+        }
+        catch (Exception ex)
+        {
+            _viewModel.StatusMessage = $"导出预览 PNG 失败：{ex.Message}";
+        }
     }
 
     private void Window_OnDragOver(object? sender, DragEventArgs e)
@@ -958,7 +1503,8 @@ public partial class MainWindow : Window
         return extension.Equals(".tso", StringComparison.OrdinalIgnoreCase) ||
                extension.Equals(".png", StringComparison.OrdinalIgnoreCase) ||
                extension.Equals(".xml", StringComparison.OrdinalIgnoreCase) ||
-               extension.Equals(".tmo", StringComparison.OrdinalIgnoreCase);
+               extension.Equals(".tmo", StringComparison.OrdinalIgnoreCase) ||
+               extension.Equals(".vmd", StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool IsTsoPath(string path)
@@ -972,7 +1518,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+        var files = await OpenFilePickerWithRecentAsync(new FilePickerOpenOptions
         {
             Title = "选择 TMO 文件",
             AllowMultiple = false,
@@ -980,12 +1526,94 @@ public partial class MainWindow : Window
             [
                 CreateTmoFileType()
             ]
-        });
+        }, RecentInputDirectoryKey);
 
         var path = files.FirstOrDefault()?.TryGetLocalPath();
         if (!string.IsNullOrWhiteSpace(path))
         {
             await ImportTmoAsync(path);
+        }
+    }
+
+    private async void ImportVmdButton_OnClick(object? sender, RoutedEventArgs e)
+    {
+        if (!StorageProvider.CanOpen)
+        {
+            _viewModel.StatusMessage = "当前平台不支持文件选择器。";
+            return;
+        }
+
+        var files = await OpenFilePickerWithRecentAsync(new FilePickerOpenOptions
+        {
+            Title = "选择 VMD 文件",
+            AllowMultiple = false,
+            FileTypeFilter =
+            [
+                CreateVmdFileType()
+            ]
+        }, RecentInputDirectoryKey);
+
+        var path = files.FirstOrDefault()?.TryGetLocalPath();
+        if (!string.IsNullOrWhiteSpace(path))
+        {
+            await ImportVmdAsync(path);
+        }
+    }
+
+    private async void ImportPosePngButton_OnClick(object? sender, RoutedEventArgs e)
+    {
+        if (_loadedDocument is null)
+        {
+            _viewModel.StatusMessage = "请先加载模型，再导入姿势 PNG。";
+            return;
+        }
+
+        if (!StorageProvider.CanOpen)
+        {
+            _viewModel.StatusMessage = "当前平台不支持文件选择器。";
+            return;
+        }
+
+        var files = await OpenFilePickerWithRecentAsync(new FilePickerOpenOptions
+        {
+            Title = "选择 pose-only 姿势 PNG",
+            AllowMultiple = false,
+            FileTypeFilter =
+            [
+                CreatePngFileType()
+            ]
+        }, RecentInputDirectoryKey);
+
+        var path = files.FirstOrDefault()?.TryGetLocalPath();
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return;
+        }
+
+        try
+        {
+            var pose = await Task.Run(() => _documentLoader.LoadPosePng(path));
+            if (!TmoContainsFigureNodes(_loadedDocument.Figure, pose.Tmo, out var missingNode))
+            {
+                throw new InvalidOperationException($"姿势 PNG 缺少当前模型需要的骨骼：{missingNode}");
+            }
+
+            if (pose.LightDirection != Microsoft.DirectX.Vector3.Empty)
+            {
+                _loadedDocument.Figure.LightDirection = pose.LightDirection;
+            }
+
+            _loadedDocument.Figure.Tmo = pose.Tmo;
+            _loadedDocument.Figure.UpdateNodeMapAndBoneMatrices();
+            ResetMorphRatios();
+            ApplyCurrentProportionsToFigure();
+            RefreshPreviewScene();
+
+            _viewModel.StatusMessage = $"已导入姿势 PNG：{Path.GetFileName(path)}";
+        }
+        catch (Exception ex)
+        {
+            _viewModel.StatusMessage = $"导入姿势 PNG 失败：{ex.Message}";
         }
     }
 
@@ -1037,6 +1665,46 @@ public partial class MainWindow : Window
         }
     }
 
+    private async Task ImportVmdAsync(string path)
+    {
+        if (_loadedDocument is null)
+        {
+            _viewModel.StatusMessage = "请先加载模型，再导入 VMD。";
+            return;
+        }
+
+        try
+        {
+            _viewModel.StatusMessage = $"正在转换 VMD：{path}";
+
+            var tmo = await Task.Run(() =>
+            {
+                var vmd = VmdFile.Load(path);
+                var converter = new VmdTmoConverter(Path.Combine(
+                    _correspondTableList.GetSourcePath(),
+                    "Girl2Miku_Default"));
+                return converter.Convert(_loadedDocument.Figure, vmd, _morphing);
+            });
+
+            if (!TmoContainsFigureNodes(_loadedDocument.Figure, tmo, out var missingNode))
+            {
+                throw new InvalidOperationException($"VMD 转换结果缺少当前模型需要的骨骼：{missingNode}");
+            }
+
+            _loadedDocument.Figure.Tmo = tmo;
+            _loadedDocument.Figure.UpdateNodeMapAndBoneMatrices();
+            ResetMorphRatios();
+            ApplyCurrentProportionsToFigure();
+            RefreshPreviewScene();
+
+            _viewModel.StatusMessage = $"已导入 VMD 为 TMO：{Path.GetFileName(path)}";
+        }
+        catch (Exception ex)
+        {
+            _viewModel.StatusMessage = $"导入 VMD 失败：{ex.Message}";
+        }
+    }
+
     private async void ExportTmoButton_OnClick(object? sender, RoutedEventArgs e)
     {
         if (_loadedDocument is null)
@@ -1052,7 +1720,7 @@ public partial class MainWindow : Window
         }
 
         var tmoType = CreateTmoFileType();
-        var file = await StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
+        var file = await SaveFilePickerWithRecentAsync(new FilePickerSaveOptions
         {
             Title = "保存当前预览 TMO",
             SuggestedFileName = $"{GetSourceBaseName(_loadedDocument.SourcePath)}.tmo",
@@ -1063,7 +1731,7 @@ public partial class MainWindow : Window
                 tmoType
             ],
             SuggestedFileType = tmoType
-        });
+        }, RecentOutputDirectoryKey);
 
         if (file is null)
         {
@@ -1095,6 +1763,127 @@ public partial class MainWindow : Window
         }
     }
 
+    private async void ExportVpdButton_OnClick(object? sender, RoutedEventArgs e)
+    {
+        if (_loadedDocument is null)
+        {
+            _viewModel.StatusMessage = "请先加载模型。";
+            return;
+        }
+
+        if (!StorageProvider.CanSave)
+        {
+            _viewModel.StatusMessage = "当前平台不支持保存文件选择器。";
+            return;
+        }
+
+        var vpdType = CreateVpdFileType();
+        var file = await SaveFilePickerWithRecentAsync(new FilePickerSaveOptions
+        {
+            Title = "保存当前姿势 VPD",
+            SuggestedFileName = $"{GetSourceBaseName(_loadedDocument.SourcePath)}.vpd",
+            DefaultExtension = "vpd",
+            ShowOverwritePrompt = true,
+            FileTypeChoices =
+            [
+                vpdType
+            ],
+            SuggestedFileType = vpdType
+        }, RecentOutputDirectoryKey);
+
+        if (file is null)
+        {
+            return;
+        }
+
+        try
+        {
+            if (_viewModel.Morphs.Any(morph => morph.Ratio > 0.0))
+            {
+                ApplyMorphsToFigure();
+            }
+            else
+            {
+                ApplyCurrentProportionsToFigure();
+            }
+
+            var correspondTableDirectory = Path.Combine(_correspondTableList.GetSourcePath(), "Girl2Miku_Default");
+            await using (var stream = await file.OpenWriteAsync())
+            {
+                await Task.Run(() => VpdExporter.Save(
+                    _loadedDocument.Figure,
+                    correspondTableDirectory,
+                    stream));
+            }
+
+            _viewModel.StatusMessage = $"已导出 VPD：{file.TryGetLocalPath() ?? file.Name}";
+        }
+        catch (Exception ex)
+        {
+            _viewModel.StatusMessage = $"导出 VPD 失败：{ex.Message}";
+        }
+    }
+
+    private async void ExportPosePngButton_OnClick(object? sender, RoutedEventArgs e)
+    {
+        if (_loadedDocument is null)
+        {
+            _viewModel.StatusMessage = "请先加载模型。";
+            return;
+        }
+
+        if (!StorageProvider.CanSave)
+        {
+            _viewModel.StatusMessage = "当前平台不支持保存文件选择器。";
+            return;
+        }
+
+        var pngType = CreatePngFileType();
+        var file = await SaveFilePickerWithRecentAsync(new FilePickerSaveOptions
+        {
+            Title = "保存 pose-only 姿势 PNG",
+            SuggestedFileName = $"{GetSourceBaseName(_loadedDocument.SourcePath)}_pose.png",
+            DefaultExtension = "png",
+            ShowOverwritePrompt = true,
+            FileTypeChoices =
+            [
+                pngType
+            ],
+            SuggestedFileType = pngType
+        }, RecentOutputDirectoryKey);
+
+        if (file is null)
+        {
+            return;
+        }
+
+        try
+        {
+            if (_viewModel.Morphs.Any(morph => morph.Ratio > 0.0))
+            {
+                ApplyMorphsToFigure();
+            }
+            else
+            {
+                ApplyCurrentProportionsToFigure();
+            }
+
+            var previewPngBytes = await TryCapturePreviewPngAsync();
+            await using var stream = await file.OpenWriteAsync();
+            TdcgPngExporter.SavePose(
+                _loadedDocument.Figure.Tmo,
+                _loadedDocument.Figure.LightDirection,
+                stream,
+                previewPngBytes);
+
+            _viewModel.StatusMessage = $"已导出姿势 PNG：{file.TryGetLocalPath() ?? file.Name}";
+        }
+        catch (Exception ex)
+        {
+            _viewModel.StatusMessage = $"导出姿势 PNG 失败：{ex.Message}";
+        }
+    }
+
     private async void ExportSelectedTsoButton_OnClick(object? sender, RoutedEventArgs e)
     {
         if (_loadedDocument is null || _viewModel.SelectedTsoFile is null)
@@ -1110,7 +1899,7 @@ public partial class MainWindow : Window
         }
 
         var tsoType = CreateTsoFileType();
-        var file = await StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
+        var file = await SaveFilePickerWithRecentAsync(new FilePickerSaveOptions
         {
             Title = "保存选中 TSO",
             SuggestedFileName = CreateTsoFileName(_viewModel.SelectedTsoFile),
@@ -1121,7 +1910,7 @@ public partial class MainWindow : Window
                 tsoType
             ],
             SuggestedFileType = tsoType
-        });
+        }, RecentOutputDirectoryKey);
 
         if (file is null)
         {
@@ -1130,6 +1919,7 @@ public partial class MainWindow : Window
 
         try
         {
+            SaveCurrentShaderEdits();
             using (var stream = await file.OpenWriteAsync())
             {
                 _viewModel.SelectedTsoFile.Source.Tso.Save(stream);
@@ -1160,6 +1950,7 @@ public partial class MainWindow : Window
         try
         {
             Directory.CreateDirectory(folder);
+            SaveCurrentShaderEdits();
             foreach (var tsoFile in _viewModel.TsoFiles.OrderBy(item => item.Index))
             {
                 tsoFile.Source.Tso.Save(Path.Combine(folder, CreateTsoFileName(tsoFile)));
@@ -1228,6 +2019,205 @@ public partial class MainWindow : Window
         }
     }
 
+    private async void ExportSelectedSubScriptButton_OnClick(object? sender, RoutedEventArgs e)
+    {
+        if (_loadedDocument is null || _viewModel.SelectedTsoSubScript is null)
+        {
+            _viewModel.StatusMessage = "请先选择 SubScript。";
+            return;
+        }
+
+        if (!StorageProvider.CanSave)
+        {
+            _viewModel.StatusMessage = "当前平台不支持保存文件选择器。";
+            return;
+        }
+
+        var textType = CreateTextFileType();
+        var file = await SaveFilePickerWithRecentAsync(new FilePickerSaveOptions
+        {
+            Title = "保存选中 SubScript",
+            SuggestedFileName = CreateSubScriptFileName(_viewModel.SelectedTsoSubScript),
+            DefaultExtension = "txt",
+            ShowOverwritePrompt = true,
+            FileTypeChoices =
+            [
+                textType
+            ],
+            SuggestedFileType = textType
+        }, RecentOutputDirectoryKey);
+
+        if (file is null)
+        {
+            return;
+        }
+
+        try
+        {
+            SaveCurrentShaderEdits();
+            await using var stream = await file.OpenWriteAsync();
+            await using var writer = new StreamWriter(stream, new UTF8Encoding(false));
+            foreach (var line in _viewModel.SelectedTsoSubScript.Source.lines)
+            {
+                await writer.WriteLineAsync(line);
+            }
+
+            _viewModel.StatusMessage = $"已导出 SubScript：{file.TryGetLocalPath() ?? file.Name}";
+        }
+        catch (Exception ex)
+        {
+            _viewModel.StatusMessage = $"导出 SubScript 失败：{ex.Message}";
+        }
+    }
+
+    private async void ExportAllSubScriptsButton_OnClick(object? sender, RoutedEventArgs e)
+    {
+        if (_loadedDocument is null)
+        {
+            _viewModel.StatusMessage = "请先加载模型。";
+            return;
+        }
+
+        var folder = await PickOutputFolderAsync("选择 SubScript 导出目录");
+        if (string.IsNullOrWhiteSpace(folder))
+        {
+            return;
+        }
+
+        try
+        {
+            SaveCurrentShaderEdits();
+            Directory.CreateDirectory(folder);
+
+            var count = 0;
+            for (var tsoIndex = 0; tsoIndex < _loadedDocument.Figure.TSOList.Count; tsoIndex++)
+            {
+                var tso = _loadedDocument.Figure.TSOList[tsoIndex];
+                var category = _loadedDocument.Categories.Count > tsoIndex
+                    ? _loadedDocument.Categories[tsoIndex]
+                    : $"对象 {tsoIndex + 1}";
+
+                for (var subScriptIndex = 0; subScriptIndex < tso.sub_scripts.Length; subScriptIndex++)
+                {
+                    var subScript = tso.sub_scripts[subScriptIndex];
+                    var fileName =
+                        $"{tsoIndex + 1:00}_{SanitizeFileName(category)}_{subScriptIndex + 1:00}_{SanitizeFileName(subScript.Name)}.txt";
+                    var path = Path.Combine(folder, fileName);
+                    await File.WriteAllLinesAsync(path, subScript.lines, new UTF8Encoding(false));
+                    count++;
+                }
+            }
+
+            _viewModel.StatusMessage = $"已导出 {count} 个 SubScript：{folder}";
+        }
+        catch (Exception ex)
+        {
+            _viewModel.StatusMessage = $"导出全部 SubScript 失败：{ex.Message}";
+        }
+    }
+
+    private async void ImportSelectedSubScriptButton_OnClick(object? sender, RoutedEventArgs e)
+    {
+        if (_loadedDocument is null || _viewModel.SelectedTsoFile is null || _viewModel.SelectedTsoSubScript is null)
+        {
+            _viewModel.StatusMessage = "请先选择 SubScript。";
+            return;
+        }
+
+        if (!StorageProvider.CanOpen)
+        {
+            _viewModel.StatusMessage = "当前平台不支持文件选择器。";
+            return;
+        }
+
+        var files = await OpenFilePickerWithRecentAsync(new FilePickerOpenOptions
+        {
+            Title = "选择替换用 SubScript 文本",
+            AllowMultiple = false,
+            FileTypeFilter =
+            [
+                CreateSubScriptFileType()
+            ]
+        }, RecentInputDirectoryKey);
+
+        var path = files.FirstOrDefault()?.TryGetLocalPath();
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return;
+        }
+
+        var selectedTsoIndex = _viewModel.SelectedTsoSubScript.TsoIndex;
+        var selectedSubScriptIndex = _viewModel.SelectedTsoSubScript.Index;
+        var subScript = _viewModel.SelectedTsoSubScript.Source;
+        SaveCurrentShaderEdits();
+        var oldLines = subScript.lines.ToArray();
+        var oldFileName = subScript.FileName;
+        var oldShader = subScript.shader;
+
+        try
+        {
+            subScript.lines = LegacyEncoding.ReadAllLinesWithDetection(path);
+            subScript.FileName = Path.GetFileName(path);
+            subScript.GenerateShader();
+            _ = subScript.shader.ColorTexName;
+            _ = subScript.shader.ShadeTexName;
+
+            RefreshAfterSubScriptChange(selectedTsoIndex, selectedSubScriptIndex);
+            _viewModel.StatusMessage = $"已导入 SubScript：{Path.GetFileName(path)}";
+        }
+        catch (Exception ex)
+        {
+            subScript.lines = oldLines;
+            subScript.FileName = oldFileName;
+            subScript.shader = oldShader;
+            _viewModel.StatusMessage = $"导入 SubScript 失败：{ex.Message}";
+        }
+    }
+
+    private async void ReplaceSelectedTsoTextureButton_OnClick(object? sender, RoutedEventArgs e)
+    {
+        if (_loadedDocument is null || _viewModel.SelectedTsoFile is null || _viewModel.SelectedTsoTexture is null)
+        {
+            _viewModel.StatusMessage = "请先选择贴图。";
+            return;
+        }
+
+        if (!StorageProvider.CanOpen)
+        {
+            _viewModel.StatusMessage = "当前平台不支持文件选择器。";
+            return;
+        }
+
+        var files = await OpenFilePickerWithRecentAsync(new FilePickerOpenOptions
+        {
+            Title = "选择替换用贴图",
+            AllowMultiple = false,
+            FileTypeFilter =
+            [
+                CreateTextureFileType()
+            ]
+        }, RecentInputDirectoryKey);
+
+        var path = files.FirstOrDefault()?.TryGetLocalPath();
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return;
+        }
+
+        try
+        {
+            TsoTextureExporter.ReplaceTexture(_viewModel.SelectedTsoTexture.Source, path);
+            _viewModel.SelectedTsoTexture.Refresh();
+            UpdateTexturePreview(_viewModel.SelectedTsoTexture);
+            RefreshPreviewScene();
+            _viewModel.StatusMessage = $"已替换贴图：{Path.GetFileName(path)}";
+        }
+        catch (Exception ex)
+        {
+            _viewModel.StatusMessage = $"替换贴图失败：{ex.Message}";
+        }
+    }
+
     private async Task<string?> PickOutputFolderAsync(string title)
     {
         if (!StorageProvider.CanPickFolder)
@@ -1236,11 +2226,11 @@ public partial class MainWindow : Window
             return null;
         }
 
-        var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
+        var folders = await OpenFolderPickerWithRecentAsync(new FolderPickerOpenOptions
         {
             Title = title,
             AllowMultiple = false
-        });
+        }, RecentOutputDirectoryKey);
 
         return folders.FirstOrDefault()?.TryGetLocalPath();
     }
@@ -1260,9 +2250,9 @@ public partial class MainWindow : Window
         }
 
         var pngType = CreatePngFileType();
-        var file = await StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
+        var file = await SaveFilePickerWithRecentAsync(new FilePickerSaveOptions
         {
-            Title = "保存 TDCG PNG",
+            Title = "保存当前 Figure TDCG PNG",
             SuggestedFileName = $"{GetSourceBaseName(_loadedDocument.SourcePath)}.png",
             DefaultExtension = "png",
             ShowOverwritePrompt = true,
@@ -1271,7 +2261,7 @@ public partial class MainWindow : Window
                 pngType
             ],
             SuggestedFileType = pngType
-        });
+        }, RecentOutputDirectoryKey);
 
         if (file is null)
         {
@@ -1280,6 +2270,7 @@ public partial class MainWindow : Window
 
         try
         {
+            SaveCurrentShaderEdits();
             if (_viewModel.Morphs.Any(morph => morph.Ratio > 0.0))
             {
                 ApplyMorphsToFigure();
@@ -1289,16 +2280,17 @@ public partial class MainWindow : Window
                 ApplyCurrentProportionsToFigure();
             }
 
+            var previewPngBytes = await TryCapturePreviewPngAsync();
             using (var stream = await file.OpenWriteAsync())
             {
-                TdcgPngExporter.Save(_loadedDocument, stream);
+                TdcgPngExporter.Save(_loadedDocument, stream, previewPngBytes);
             }
 
-            _viewModel.StatusMessage = $"已导出 TDCG PNG：{file.TryGetLocalPath() ?? file.Name}";
+            _viewModel.StatusMessage = $"已导出当前 Figure TDCG PNG：{file.TryGetLocalPath() ?? file.Name}";
         }
         catch (Exception ex)
         {
-            _viewModel.StatusMessage = $"导出 TDCG PNG 失败：{ex.Message}";
+            _viewModel.StatusMessage = $"导出当前 Figure TDCG PNG 失败：{ex.Message}";
         }
     }
 
@@ -1307,6 +2299,42 @@ public partial class MainWindow : Window
         {
             Patterns = ["*.tmo", "*.TMO"]
         };
+
+    private static FilePickerFileType CreateVmdFileType()
+        => new("VMD")
+        {
+            Patterns = ["*.vmd", "*.VMD"]
+        };
+
+    private static FilePickerFileType CreateVpdFileType()
+        => new("VPD")
+        {
+            Patterns = ["*.vpd", "*.VPD"]
+        };
+
+    private async Task<byte[]?> TryCapturePreviewPngAsync()
+    {
+        try
+        {
+            var capture = await PreviewControl.CaptureFrameAsync();
+            if (capture is null)
+            {
+                return null;
+            }
+
+            using var image = SixLabors.ImageSharp.Image.LoadPixelData<Rgba32>(
+                capture.RgbaPixels,
+                capture.Width,
+                capture.Height);
+            await using var stream = new MemoryStream();
+            await image.SaveAsPngAsync(stream);
+            return stream.ToArray();
+        }
+        catch
+        {
+            return null;
+        }
+    }
 
     private static FilePickerFileType CreateTsoFileType()
         => new("TSO")
@@ -1320,8 +2348,29 @@ public partial class MainWindow : Window
             Patterns = ["*.png", "*.PNG"]
         };
 
+    private static FilePickerFileType CreateTextureFileType()
+        => new("Texture")
+        {
+            Patterns = ["*.bmp", "*.BMP", "*.tga", "*.TGA", "*.png", "*.PNG"]
+        };
+
+    private static FilePickerFileType CreateSubScriptFileType()
+        => new("SubScript")
+        {
+            Patterns = ["*.txt", "*.TXT", "*.cgfx", "*.CGFX", "*.shader", "*.SHADER"]
+        };
+
+    private static FilePickerFileType CreateTextFileType()
+        => new("Text")
+        {
+            Patterns = ["*.txt", "*.TXT"]
+        };
+
     private static string CreateTsoFileName(TsoFileViewModel tsoFile)
         => $"{tsoFile.Index + 1:00}_{SanitizeFileName(tsoFile.Category)}.tso";
+
+    private static string CreateSubScriptFileName(TsoSubScriptViewModel subScript)
+        => $"{subScript.TsoIndex + 1:00}_{subScript.Index + 1:00}_{SanitizeFileName(subScript.Source.Name)}.txt";
 
     private static string SanitizeFileName(string value)
     {
@@ -1361,7 +2410,7 @@ public partial class MainWindow : Window
         return true;
     }
 
-    private static void ValidateTsoCanAppend(Figure figure, TSOFile tso, string sourcePath)
+    private static void ValidateTsoCompatibleWithFigure(Figure figure, TSOFile tso, string sourcePath)
     {
         if (figure.Tmo.nodemap is null)
         {
@@ -1402,6 +2451,7 @@ public partial class MainWindow : Window
         {
             _viewModel.StatusMessage = "正在导出 PMX...";
             ApplyCurrentProportionsToFigure();
+            SaveCurrentShaderEdits();
 
             var outputDirectory = ResolveOutputDirectory();
             Directory.CreateDirectory(outputDirectory);
@@ -1559,7 +2609,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+        var files = await OpenFilePickerWithRecentAsync(new FilePickerOpenOptions
         {
             Title = "选择 TPOConfig.xml",
             AllowMultiple = false,
@@ -1570,7 +2620,7 @@ public partial class MainWindow : Window
                     Patterns = ["*.xml"]
                 }
             ]
-        });
+        }, RecentInputDirectoryKey);
 
         var path = files.FirstOrDefault()?.TryGetLocalPath();
         if (string.IsNullOrWhiteSpace(path))
@@ -1768,18 +2818,123 @@ public partial class MainWindow : Window
     {
         RebuildMeshGroups();
         RefreshPreviewScene();
+        SaveSettingsFromViewModel();
     }
 
-    private async void FigureComboBox_OnSelectionChanged(object? sender, SelectionChangedEventArgs e)
+    private void FigureComboBox_OnSelectionChanged(object? sender, SelectionChangedEventArgs e)
     {
-        if (_loadedDocument is null ||
+        if (_isUpdatingFigures ||
+            _loadedSession is null ||
+            _loadedDocument is null ||
             _viewModel.SelectedFigure is null ||
             _viewModel.SelectedFigure.Index == _loadedDocument.FigureIndex)
         {
             return;
         }
 
-        await LoadSourceAsync(_loadedDocument.SourcePath, _viewModel.SelectedFigure.Index);
+        try
+        {
+            var oldDocument = _loadedDocument;
+            var document = _documentLoader.CreateDocument(_loadedSession, _viewModel.SelectedFigure.Index);
+            _loadedDocument = document;
+            oldDocument.Dispose();
+            SetActiveDocument(document, _loadedSession.SourcePath, resetModelName: false);
+            SaveEditSessionSnapshot();
+            _viewModel.StatusMessage = $"已切换到 Figure {_viewModel.SelectedFigure.Index + 1}。";
+        }
+        catch (Exception ex)
+        {
+            _viewModel.StatusMessage = $"切换 Figure 失败：{ex.Message}";
+        }
+    }
+
+    private async void AppendFigureFromPngButton_OnClick(object? sender, RoutedEventArgs e)
+    {
+        if (_loadedSession is null)
+        {
+            _viewModel.StatusMessage = "请先加载模型。";
+            return;
+        }
+
+        if (!StorageProvider.CanOpen)
+        {
+            _viewModel.StatusMessage = "当前平台不支持文件选择器。";
+            return;
+        }
+
+        var files = await OpenFilePickerWithRecentAsync(new FilePickerOpenOptions
+        {
+            Title = "选择要追加 Figure 的 TDCG PNG",
+            AllowMultiple = false,
+            FileTypeFilter =
+            [
+                CreatePngFileType()
+            ]
+        }, RecentInputDirectoryKey);
+
+        var path = files.FirstOrDefault()?.TryGetLocalPath();
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return;
+        }
+
+        try
+        {
+            var importedSession = await Task.Run(() => _documentLoader.LoadSession(path));
+            var figures = importedSession.DetachFigures();
+            var firstAddedIndex = _loadedSession.Figures.Count;
+            _loadedSession.AddFigures(figures);
+            importedSession.Dispose();
+
+            var oldDocument = _loadedDocument;
+            var document = _documentLoader.CreateDocument(_loadedSession, firstAddedIndex);
+            _loadedDocument = document;
+            oldDocument?.Dispose();
+            SetActiveDocument(document, _loadedSession.SourcePath, resetModelName: false);
+            SaveEditSessionSnapshot();
+            _viewModel.StatusMessage = $"已追加 {figures.Count} 个 Figure：{Path.GetFileName(path)}";
+        }
+        catch (Exception ex)
+        {
+            _viewModel.StatusMessage = $"追加 PNG Figure 失败：{ex.Message}";
+        }
+    }
+
+    private void RemoveCurrentFigureButton_OnClick(object? sender, RoutedEventArgs e)
+    {
+        if (_loadedSession is null || _loadedDocument is null)
+        {
+            _viewModel.StatusMessage = "请先加载模型。";
+            return;
+        }
+
+        if (_loadedSession.Figures.Count <= 1)
+        {
+            _viewModel.StatusMessage = "至少需要保留 1 个 Figure。";
+            return;
+        }
+
+        var removeIndex = _loadedDocument.FigureIndex;
+        var oldDocument = _loadedDocument;
+        var removed = _loadedSession.RemoveAt(removeIndex);
+        var nextIndex = Math.Min(removeIndex, _loadedSession.Figures.Count - 1);
+
+        try
+        {
+            var document = _documentLoader.CreateDocument(_loadedSession, nextIndex);
+            _loadedDocument = document;
+            oldDocument.Dispose();
+            SetActiveDocument(document, _loadedSession.SourcePath, resetModelName: false);
+            removed.Figure.Dispose();
+            SaveEditSessionSnapshot();
+            _viewModel.StatusMessage = $"已删除 Figure {removeIndex + 1}。";
+        }
+        catch (Exception ex)
+        {
+            _loadedSession.InsertAt(removeIndex, removed);
+            _loadedDocument = oldDocument;
+            _viewModel.StatusMessage = $"删除 Figure 失败：{ex.Message}";
+        }
     }
 
     private void MoveTsoUpButton_OnClick(object? sender, RoutedEventArgs e)
@@ -1806,7 +2961,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+        var files = await OpenFilePickerWithRecentAsync(new FilePickerOpenOptions
         {
             Title = "选择要追加的 TSO 文件",
             AllowMultiple = true,
@@ -1814,7 +2969,7 @@ public partial class MainWindow : Window
             [
                 CreateTsoFileType()
             ]
-        });
+        }, RecentInputDirectoryKey);
 
         var paths = files
             .Select(file => file.TryGetLocalPath())
@@ -1837,7 +2992,7 @@ public partial class MainWindow : Window
                 try
                 {
                     tso.Load(path);
-                    ValidateTsoCanAppend(_loadedDocument.Figure, tso, path);
+                    ValidateTsoCompatibleWithFigure(_loadedDocument.Figure, tso, path);
                     loadedTsos.Add((tso, Path.GetFileNameWithoutExtension(path)));
                 }
                 catch
@@ -1871,6 +3026,73 @@ public partial class MainWindow : Window
             }
 
             _viewModel.StatusMessage = $"追加 TSO 失败：{ex.Message}";
+        }
+    }
+
+    private async void ReplaceSelectedTsoButton_OnClick(object? sender, RoutedEventArgs e)
+    {
+        if (_loadedDocument is null || _viewModel.SelectedTsoFile is null)
+        {
+            _viewModel.StatusMessage = "请先选择 TSO。";
+            return;
+        }
+
+        if (!StorageProvider.CanOpen)
+        {
+            _viewModel.StatusMessage = "当前平台不支持文件选择器。";
+            return;
+        }
+
+        var files = await OpenFilePickerWithRecentAsync(new FilePickerOpenOptions
+        {
+            Title = "选择替换用 TSO 文件",
+            AllowMultiple = false,
+            FileTypeFilter =
+            [
+                CreateTsoFileType()
+            ]
+        }, RecentInputDirectoryKey);
+
+        var path = files.FirstOrDefault()?.TryGetLocalPath();
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return;
+        }
+
+        var replaceIndex = _viewModel.SelectedTsoFile.Index;
+        if (replaceIndex < 0 || replaceIndex >= _loadedDocument.Figure.TSOList.Count)
+        {
+            return;
+        }
+
+        var replacement = new TSOFile();
+        try
+        {
+            replacement.Load(path);
+            ValidateTsoCompatibleWithFigure(_loadedDocument.Figure, replacement, path);
+
+            var categories = _loadedDocument.Categories.ToList();
+            while (categories.Count <= replaceIndex)
+            {
+                categories.Add($"对象 {categories.Count + 1}");
+            }
+
+            if (string.IsNullOrWhiteSpace(categories[replaceIndex]))
+            {
+                categories[replaceIndex] = Path.GetFileNameWithoutExtension(path);
+            }
+
+            var oldTso = _loadedDocument.Figure.TSOList[replaceIndex];
+            _loadedDocument.Figure.TSOList[replaceIndex] = replacement;
+            SafeDisposeTso(oldTso);
+
+            RefreshCurrentDocument(categories, replaceIndex);
+            _viewModel.StatusMessage = $"已替换 TSO：{Path.GetFileName(path)}";
+        }
+        catch (Exception ex)
+        {
+            SafeDisposeTso(replacement);
+            _viewModel.StatusMessage = $"替换 TSO 失败：{ex.Message}";
         }
     }
 
@@ -1908,12 +3130,20 @@ public partial class MainWindow : Window
 
         var selectedIndex = Math.Min(removeIndex, _loadedDocument.Figure.TSOList.Count - 1);
         RefreshCurrentDocument(categories, selectedIndex);
+        SaveEditSessionSnapshot();
         _viewModel.StatusMessage = $"已移除 TSO：{removedCategory}";
     }
 
     private void TsoFileListBox_OnSelectionChanged(object? sender, SelectionChangedEventArgs e)
     {
         PopulateTsoSubScripts(_viewModel.SelectedTsoFile);
+        PopulateTsoTextures(_viewModel.SelectedTsoFile);
+        SaveEditSessionSnapshot();
+    }
+
+    private void TsoTextureListBox_OnSelectionChanged(object? sender, SelectionChangedEventArgs e)
+    {
+        UpdateTexturePreview(_viewModel.SelectedTsoTexture);
     }
 
     private void TsoSubScriptListBox_OnSelectionChanged(object? sender, SelectionChangedEventArgs e)
@@ -1927,6 +3157,72 @@ public partial class MainWindow : Window
             item.Source.TsoIndex == _viewModel.SelectedTsoSubScript.TsoIndex &&
             item.Source.MaterialIndex == _viewModel.SelectedTsoSubScript.Index);
         UpdateMaterialDetails(_viewModel.SelectedMaterial);
+    }
+
+    private void UpdateTexturePreview(TsoTextureViewModel? texture)
+    {
+        if (texture is null)
+        {
+            _viewModel.TextureDetails = string.Empty;
+            SetTexturePreview(null);
+            return;
+        }
+
+        try
+        {
+            using var image = TsoTextureExporter.CreateImage(texture.Source);
+            using var stream = new MemoryStream();
+            image.SaveAsPng(stream);
+            stream.Position = 0;
+            SetTexturePreview(new Bitmap(stream));
+            _viewModel.TextureDetails = texture.Details;
+        }
+        catch (Exception ex)
+        {
+            _viewModel.TextureDetails = $"贴图预览失败：{ex.Message}";
+            SetTexturePreview(null);
+        }
+    }
+
+    private void SetTexturePreview(Bitmap? preview)
+    {
+        var oldPreview = _viewModel.TexturePreview;
+        _viewModel.TexturePreview = preview;
+        oldPreview?.Dispose();
+    }
+
+    private void RefreshAfterSubScriptChange(int selectedTsoIndex, int selectedSubScriptIndex)
+    {
+        if (_loadedDocument is null)
+        {
+            return;
+        }
+
+        var categories = _viewModel.TsoFiles
+            .OrderBy(item => item.Index)
+            .Select(item => string.IsNullOrWhiteSpace(item.Category)
+                ? (_loadedDocument.Categories.Count > item.Index ? _loadedDocument.Categories[item.Index] : $"对象 {item.Index + 1}")
+                : item.Category)
+            .ToList();
+
+        _loadedDocument = _documentLoader.Rebuild(_loadedDocument, categories);
+        _viewModel.DocumentSummary = BuildDocumentSummary(_loadedDocument);
+        PopulateMaterials(_loadedDocument);
+        PopulateTsoFiles(_loadedDocument);
+        _viewModel.SelectedTsoFile = _viewModel.TsoFiles.FirstOrDefault(item => item.Index == selectedTsoIndex);
+        PopulateTsoSubScripts(_viewModel.SelectedTsoFile);
+        PopulateTsoTextures(_viewModel.SelectedTsoFile);
+        _viewModel.SelectedTsoSubScript = _viewModel.TsoSubScripts.FirstOrDefault(item => item.Index == selectedSubScriptIndex);
+        if (_viewModel.SelectedTsoSubScript is not null)
+        {
+            _viewModel.SelectedMaterial = _viewModel.Materials.FirstOrDefault(item =>
+                item.Source.TsoIndex == selectedTsoIndex &&
+                item.Source.MaterialIndex == selectedSubScriptIndex);
+            UpdateMaterialDetails(_viewModel.SelectedMaterial);
+        }
+
+        RebuildMeshGroups();
+        RefreshPreviewScene();
     }
 
     private void MoveSelectedTso(int delta)
@@ -1952,6 +3248,7 @@ public partial class MainWindow : Window
         RebuildLoadedDocument(categories);
         _viewModel.SelectedTsoFile = _viewModel.TsoFiles.FirstOrDefault(item => item.Index == newIndex);
         PopulateTsoSubScripts(_viewModel.SelectedTsoFile);
+        SaveEditSessionSnapshot();
     }
 
     private void SelectAllMeshesButton_OnClick(object? sender, RoutedEventArgs e)
@@ -1973,6 +3270,7 @@ public partial class MainWindow : Window
 
         RebuildMeshGroups();
         RefreshPreviewScene();
+        SaveEditSessionSnapshot();
     }
 
     private void SetAllMeshSelection(bool isSelected)
@@ -1980,6 +3278,7 @@ public partial class MainWindow : Window
         Array.Fill(_selectedSubMeshes, isSelected);
         RebuildMeshGroups();
         RefreshPreviewScene();
+        SaveEditSessionSnapshot();
     }
 
     private void MaterialListBox_OnSelectionChanged(object? sender, SelectionChangedEventArgs e)

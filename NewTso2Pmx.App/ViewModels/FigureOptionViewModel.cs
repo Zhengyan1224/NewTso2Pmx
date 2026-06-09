@@ -10,4 +10,6 @@ public sealed class FigureOptionViewModel
     public int Index { get; }
 
     public string DisplayText => $"Figure {Index + 1}";
+
+    public override string ToString() => DisplayText;
 }

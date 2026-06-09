@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using Avalonia.Media.Imaging;
 using NewTso2Pmx.Core.Loading;
 using NewTso2Pmx.Core.Preview;
 
@@ -33,7 +34,10 @@ public sealed class MainWindowViewModel : ViewModelBase
     private MaterialViewModel? _selectedMaterial;
     private TsoFileViewModel? _selectedTsoFile;
     private TsoSubScriptViewModel? _selectedTsoSubScript;
+    private TsoTextureViewModel? _selectedTsoTexture;
     private FigureOptionViewModel? _selectedFigure;
+    private string _textureDetails = string.Empty;
+    private Bitmap? _texturePreview;
     private PreviewSceneData? _previewScene;
     private double _figureArmRatio = 0.5;
     private double _figureLegRatio = 0.5;
@@ -234,10 +238,28 @@ public sealed class MainWindowViewModel : ViewModelBase
         set => SetProperty(ref _selectedTsoSubScript, value);
     }
 
+    public TsoTextureViewModel? SelectedTsoTexture
+    {
+        get => _selectedTsoTexture;
+        set => SetProperty(ref _selectedTsoTexture, value);
+    }
+
     public FigureOptionViewModel? SelectedFigure
     {
         get => _selectedFigure;
         set => SetProperty(ref _selectedFigure, value);
+    }
+
+    public string TextureDetails
+    {
+        get => _textureDetails;
+        set => SetProperty(ref _textureDetails, value);
+    }
+
+    public Bitmap? TexturePreview
+    {
+        get => _texturePreview;
+        set => SetProperty(ref _texturePreview, value);
     }
 
     public PreviewSceneData? PreviewScene
@@ -355,6 +377,8 @@ public sealed class MainWindowViewModel : ViewModelBase
     public ObservableCollection<TsoFileViewModel> TsoFiles { get; } = [];
 
     public ObservableCollection<TsoSubScriptViewModel> TsoSubScripts { get; } = [];
+
+    public ObservableCollection<TsoTextureViewModel> TsoTextures { get; } = [];
 
     public ObservableCollection<FigureOptionViewModel> Figures { get; } = [];
 }

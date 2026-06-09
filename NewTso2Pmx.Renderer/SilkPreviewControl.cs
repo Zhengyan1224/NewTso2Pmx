@@ -2,6 +2,7 @@ using System;
 using System.Linq;
 using System.Numerics;
 using System.Runtime.InteropServices;
+using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Input;
 using Avalonia.OpenGL;
@@ -22,8 +23,11 @@ public sealed class SilkPreviewControl : OpenGlControlBase
     private uint _vertexBuffer;
     private uint _indexBuffer;
     private int _mvpLocation = -1;
+    private int _textureLocation = -1;
+    private int _useTextureLocation = -1;
     private bool _sceneDirty = true;
     private PreviewSceneData? _uploadedScene;
+    private readonly Dictionary<PreviewTextureData, uint> _textures = new();
     private float _yaw = -0.8f;
     private float _pitch = 0.35f;
     private float _distance = 40.0f;
@@ -32,6 +36,7 @@ public sealed class SilkPreviewControl : OpenGlControlBase
     private bool _isPanning;
     private bool _isZooming;
     private Point _lastPointerPosition;
+    private TaskCompletionSource<PreviewFrameCapture?>? _pendingCapture;
 
     public SilkPreviewControl()
     {
@@ -42,6 +47,24 @@ public sealed class SilkPreviewControl : OpenGlControlBase
     {
         get => GetValue(SceneProperty);
         set => SetValue(SceneProperty, value);
+    }
+
+    public Task<PreviewFrameCapture?> CaptureFrameAsync()
+    {
+        if (_gl is null)
+        {
+            return Task.FromResult<PreviewFrameCapture?>(null);
+        }
+
+        if (_pendingCapture is not null)
+        {
+            return _pendingCapture.Task;
+        }
+
+        _pendingCapture = new TaskCompletionSource<PreviewFrameCapture?>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        RequestNextFrameRendering();
+        return _pendingCapture.Task;
     }
 
     protected override void OnPropertyChanged(AvaloniaPropertyChangedEventArgs change)
@@ -60,6 +83,8 @@ public sealed class SilkPreviewControl : OpenGlControlBase
         _gl = GL.GetApi(name => gl.GetProcAddress(name));
         _program = CreateProgram(_gl);
         _mvpLocation = _gl.GetUniformLocation(_program, "uMvp");
+        _textureLocation = _gl.GetUniformLocation(_program, "uColorTexture");
+        _useTextureLocation = _gl.GetUniformLocation(_program, "uUseTexture");
         _vertexArray = _gl.GenVertexArray();
         _vertexBuffer = _gl.GenBuffer();
         _indexBuffer = _gl.GenBuffer();
@@ -91,6 +116,8 @@ public sealed class SilkPreviewControl : OpenGlControlBase
             _vertexArray = 0;
         }
 
+        DeleteTextures();
+
         if (_program != 0)
         {
             _gl.DeleteProgram(_program);
@@ -113,6 +140,8 @@ public sealed class SilkPreviewControl : OpenGlControlBase
         _gl.Enable(GLEnum.DepthTest);
         _gl.Enable(GLEnum.CullFace);
         _gl.CullFace(GLEnum.Back);
+        _gl.Enable(GLEnum.Blend);
+        _gl.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha);
         _gl.ClearColor(0.88f, 0.90f, 0.94f, 1.0f);
         _gl.Clear((uint)(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit));
 
@@ -123,6 +152,7 @@ public sealed class SilkPreviewControl : OpenGlControlBase
 
         if (_uploadedScene is null || _uploadedScene.IsEmpty || _program == 0)
         {
+            CompletePendingCapture();
             return;
         }
 
@@ -140,9 +170,43 @@ public sealed class SilkPreviewControl : OpenGlControlBase
         _gl.UseProgram(_program);
         _gl.BindVertexArray(_vertexArray);
         _gl.UniformMatrix4(_mvpLocation, 1, false, (float*)&mvp);
-        _gl.DrawElements(PrimitiveType.Triangles, (uint)_uploadedScene.Indices.Count, DrawElementsType.UnsignedInt, null);
+        _gl.Uniform1(_textureLocation, 0);
+
+        if (_uploadedScene.DrawBatches.Count == 0)
+        {
+            _gl.Uniform1(_useTextureLocation, 0);
+            _gl.DrawElements(PrimitiveType.Triangles, (uint)_uploadedScene.Indices.Count, DrawElementsType.UnsignedInt, null);
+        }
+        else
+        {
+            foreach (var batch in _uploadedScene.DrawBatches)
+            {
+                var texture = GetTexture(batch.ColorTexture);
+                if (texture != 0)
+                {
+                    _gl.ActiveTexture(TextureUnit.Texture0);
+                    _gl.BindTexture(TextureTarget.Texture2D, texture);
+                    _gl.Uniform1(_useTextureLocation, 1);
+                }
+                else
+                {
+                    _gl.BindTexture(TextureTarget.Texture2D, 0);
+                    _gl.Uniform1(_useTextureLocation, 0);
+                }
+
+                _gl.DrawElements(
+                    PrimitiveType.Triangles,
+                    (uint)batch.IndexCount,
+                    DrawElementsType.UnsignedInt,
+                    (void*)(batch.StartIndex * sizeof(uint)));
+            }
+        }
+
+        _gl.BindTexture(TextureTarget.Texture2D, 0);
         _gl.BindVertexArray(0);
         _gl.UseProgram(0);
+
+        CompletePendingCapture();
     }
 
     protected override void OnPointerPressed(PointerPressedEventArgs e)
@@ -236,6 +300,7 @@ public sealed class SilkPreviewControl : OpenGlControlBase
 
         _sceneDirty = false;
         _uploadedScene = Scene;
+        DeleteTextures();
 
         _gl.BindVertexArray(_vertexArray);
         _gl.BindBuffer(BufferTargetARB.ArrayBuffer, _vertexBuffer);
@@ -277,7 +342,63 @@ public sealed class SilkPreviewControl : OpenGlControlBase
         _gl.VertexAttribPointer(1, 3, VertexAttribPointerType.Float, false, stride, (void*)Marshal.OffsetOf<PreviewVertex>(nameof(PreviewVertex.Normal)));
         _gl.EnableVertexAttribArray(2);
         _gl.VertexAttribPointer(2, 4, VertexAttribPointerType.Float, false, stride, (void*)Marshal.OffsetOf<PreviewVertex>(nameof(PreviewVertex.Color)));
+        _gl.EnableVertexAttribArray(3);
+        _gl.VertexAttribPointer(3, 2, VertexAttribPointerType.Float, false, stride, (void*)Marshal.OffsetOf<PreviewVertex>(nameof(PreviewVertex.TexCoord)));
         _gl.BindVertexArray(0);
+    }
+
+    private unsafe uint GetTexture(PreviewTextureData? textureData)
+    {
+        if (_gl is null || textureData is null)
+        {
+            return 0;
+        }
+
+        if (_textures.TryGetValue(textureData, out var existing))
+        {
+            return existing;
+        }
+
+        var texture = _gl.GenTexture();
+        _gl.BindTexture(TextureTarget.Texture2D, texture);
+        _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int)GLEnum.Linear);
+        _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, (int)GLEnum.Linear);
+        _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapS, (int)GLEnum.Repeat);
+        _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapT, (int)GLEnum.Repeat);
+        _gl.PixelStore(PixelStoreParameter.UnpackAlignment, 1);
+
+        fixed (byte* pixels = textureData.RgbaPixels)
+        {
+            _gl.TexImage2D(
+                TextureTarget.Texture2D,
+                0,
+                InternalFormat.Rgba,
+                (uint)textureData.Width,
+                (uint)textureData.Height,
+                0,
+                PixelFormat.Rgba,
+                PixelType.UnsignedByte,
+                pixels);
+        }
+
+        _textures[textureData] = texture;
+        return texture;
+    }
+
+    private void DeleteTextures()
+    {
+        if (_gl is null)
+        {
+            _textures.Clear();
+            return;
+        }
+
+        foreach (var texture in _textures.Values)
+        {
+            _gl.DeleteTexture(texture);
+        }
+
+        _textures.Clear();
     }
 
     private void UpdateCameraFromScene(PreviewSceneData? scene)
@@ -318,17 +439,20 @@ public sealed class SilkPreviewControl : OpenGlControlBase
             layout (location = 0) in vec3 aPosition;
             layout (location = 1) in vec3 aNormal;
             layout (location = 2) in vec4 aColor;
+            layout (location = 3) in vec2 aTexCoord;
 
             uniform mat4 uMvp;
 
             out vec3 vNormal;
             out vec4 vColor;
+            out vec2 vTexCoord;
 
             void main()
             {
                 gl_Position = uMvp * vec4(aPosition, 1.0);
                 vNormal = aNormal;
                 vColor = aColor;
+                vTexCoord = aTexCoord;
             }
             """;
 
@@ -336,6 +460,10 @@ public sealed class SilkPreviewControl : OpenGlControlBase
             #version 330 core
             in vec3 vNormal;
             in vec4 vColor;
+            in vec2 vTexCoord;
+
+            uniform sampler2D uColorTexture;
+            uniform int uUseTexture;
 
             out vec4 FragColor;
 
@@ -343,7 +471,8 @@ public sealed class SilkPreviewControl : OpenGlControlBase
             {
                 vec3 lightDir = normalize(vec3(0.3, 0.8, 0.6));
                 float lambert = max(dot(normalize(vNormal), lightDir), 0.15);
-                FragColor = vec4(vColor.rgb * lambert, 1.0);
+                vec4 baseColor = uUseTexture == 1 ? texture(uColorTexture, vTexCoord) : vColor;
+                FragColor = vec4(baseColor.rgb * lambert, baseColor.a);
             }
             """;
 
@@ -370,6 +499,44 @@ public sealed class SilkPreviewControl : OpenGlControlBase
         return program;
     }
 
+    private unsafe void CompletePendingCapture()
+    {
+        if (_pendingCapture is null)
+        {
+            return;
+        }
+
+        var capture = CaptureCurrentFrame();
+        _pendingCapture.SetResult(capture);
+        _pendingCapture = null;
+    }
+
+    private unsafe PreviewFrameCapture? CaptureCurrentFrame()
+    {
+        if (_gl is null)
+        {
+            return null;
+        }
+
+        var width = Math.Max(1, (int)Bounds.Width);
+        var height = Math.Max(1, (int)Bounds.Height);
+        var bottomUp = new byte[width * height * 4];
+        fixed (byte* pixels = bottomUp)
+        {
+            _gl.PixelStore(PixelStoreParameter.PackAlignment, 1);
+            _gl.ReadPixels(0, 0, (uint)width, (uint)height, PixelFormat.Rgba, PixelType.UnsignedByte, pixels);
+        }
+
+        var topDown = new byte[bottomUp.Length];
+        var stride = width * 4;
+        for (var y = 0; y < height; y++)
+        {
+            System.Buffer.BlockCopy(bottomUp, (height - 1 - y) * stride, topDown, y * stride, stride);
+        }
+
+        return new PreviewFrameCapture(width, height, topDown);
+    }
+
     private static uint CompileShader(GL gl, ShaderType type, string source)
     {
         var shader = gl.CreateShader(type);
@@ -386,3 +553,5 @@ public sealed class SilkPreviewControl : OpenGlControlBase
         return shader;
     }
 }
+
+public sealed record PreviewFrameCapture(int Width, int Height, byte[] RgbaPixels);

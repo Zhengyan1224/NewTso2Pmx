@@ -7,4 +7,5 @@ namespace NewTso2Pmx.Core.Preview;
 public readonly record struct PreviewVertex(
     Vector3 Position,
     Vector3 Normal,
-    Vector4 Color);
+    Vector4 Color,
+    Vector2 TexCoord);

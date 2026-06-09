@@ -21,6 +21,8 @@ namespace TDCG
         internal byte[] header;
         internal byte[] ihdr;
         internal List<byte[]> IdatList = new List<byte[]>();
+        internal List<PNGChunk> ChunksBeforeIdat = new List<PNGChunk>();
+        internal List<PNGChunk> ChunksAfterIdat = new List<PNGChunk>();
         /// <summary>
         /// CSCチェックを行うオブジェクト
         /// </summary>
@@ -56,9 +58,17 @@ namespace TDCG
 
             PNGWriter.Write(bw, header);
             PNGWriter.WriteIHDR(bw, ihdr);
+            foreach (PNGChunk chunk in ChunksBeforeIdat)
+            {
+                PNGWriter.WriteChunk(bw, chunk.Type, chunk.Data);
+            }
             foreach (byte[] idat in IdatList)
             {
                 PNGWriter.WriteIDAT(bw, idat);
+            }
+            foreach (PNGChunk chunk in ChunksAfterIdat)
+            {
+                PNGWriter.WriteChunk(bw, chunk.Type, chunk.Data);
             }
             if (WriteTaOb != null)
                 WriteTaOb(bw);
@@ -162,7 +172,25 @@ namespace TDCG
                         Iend(chunk_data);
                     break;
                 }
+                else if (ShouldPreserveChunk(type))
+                {
+                    if (IdatList.Count == 0)
+                        ChunksBeforeIdat.Add(new PNGChunk(type, chunk_data));
+                    else
+                        ChunksAfterIdat.Add(new PNGChunk(type, chunk_data));
+                }
             }
+        }
+
+        static bool ShouldPreserveChunk(string type)
+        {
+            if (type.Length != 4)
+                return false;
+
+            if (type == "IHDR" || type == "IDAT" || type == "IEND" || type == "taOb")
+                return false;
+
+            return char.IsLower(type[0]);
         }
 
         /// <summary>
@@ -302,4 +330,6 @@ namespace TDCG
             }
         }
     }
+
+    internal sealed record PNGChunk(string Type, byte[] Data);
 }
