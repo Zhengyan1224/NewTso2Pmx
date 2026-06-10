@@ -14,6 +14,8 @@ namespace NewTso2Pmx.Renderer;
 
 public sealed class SilkPreviewControl : OpenGlControlBase
 {
+    private static readonly Vector3 DefaultLightDirection = Vector3.Normalize(new(0.3f, 0.8f, 0.6f));
+
     public static readonly StyledProperty<PreviewSceneData?> SceneProperty =
         AvaloniaProperty.Register<SilkPreviewControl, PreviewSceneData?>(nameof(Scene));
 
@@ -24,7 +26,13 @@ public sealed class SilkPreviewControl : OpenGlControlBase
     private uint _indexBuffer;
     private int _mvpLocation = -1;
     private int _textureLocation = -1;
+    private int _shadeTextureLocation = -1;
     private int _useTextureLocation = -1;
+    private int _useShadeTextureLocation = -1;
+    private int _lightDirectionLocation = -1;
+    private int _renderOutlineLocation = -1;
+    private int _outlineColorLocation = -1;
+    private int _outlineThicknessLocation = -1;
     private bool _sceneDirty = true;
     private PreviewSceneData? _uploadedScene;
     private readonly Dictionary<PreviewTextureData, uint> _textures = new();
@@ -84,7 +92,13 @@ public sealed class SilkPreviewControl : OpenGlControlBase
         _program = CreateProgram(_gl);
         _mvpLocation = _gl.GetUniformLocation(_program, "uMvp");
         _textureLocation = _gl.GetUniformLocation(_program, "uColorTexture");
+        _shadeTextureLocation = _gl.GetUniformLocation(_program, "uShadeTexture");
         _useTextureLocation = _gl.GetUniformLocation(_program, "uUseTexture");
+        _useShadeTextureLocation = _gl.GetUniformLocation(_program, "uUseShadeTexture");
+        _lightDirectionLocation = _gl.GetUniformLocation(_program, "uLightDirection");
+        _renderOutlineLocation = _gl.GetUniformLocation(_program, "uRenderOutline");
+        _outlineColorLocation = _gl.GetUniformLocation(_program, "uOutlineColor");
+        _outlineThicknessLocation = _gl.GetUniformLocation(_program, "uOutlineThickness");
         _vertexArray = _gl.GenVertexArray();
         _vertexBuffer = _gl.GenBuffer();
         _indexBuffer = _gl.GenBuffer();
@@ -171,29 +185,45 @@ public sealed class SilkPreviewControl : OpenGlControlBase
         _gl.BindVertexArray(_vertexArray);
         _gl.UniformMatrix4(_mvpLocation, 1, false, (float*)&mvp);
         _gl.Uniform1(_textureLocation, 0);
+        _gl.Uniform1(_shadeTextureLocation, 1);
 
         if (_uploadedScene.DrawBatches.Count == 0)
         {
             _gl.Uniform1(_useTextureLocation, 0);
+            _gl.Uniform1(_useShadeTextureLocation, 0);
+            _gl.Uniform3(_lightDirectionLocation, DefaultLightDirection.X, DefaultLightDirection.Y, DefaultLightDirection.Z);
+            _gl.Uniform1(_renderOutlineLocation, 0);
             _gl.DrawElements(PrimitiveType.Triangles, (uint)_uploadedScene.Indices.Count, DrawElementsType.UnsignedInt, null);
         }
         else
         {
             foreach (var batch in _uploadedScene.DrawBatches)
             {
-                var texture = GetTexture(batch.ColorTexture);
-                if (texture != 0)
+                var lightDirection = SafeNormalize(batch.LightDirection);
+                _gl.Uniform3(_lightDirectionLocation, lightDirection.X, lightDirection.Y, lightDirection.Z);
+                BindBatchTexture(batch.ColorTexture, TextureUnit.Texture0, _useTextureLocation);
+                BindBatchTexture(batch.ShadeTexture, TextureUnit.Texture1, _useShadeTextureLocation);
+
+                if (ShouldRenderOutline(batch))
                 {
-                    _gl.ActiveTexture(TextureUnit.Texture0);
-                    _gl.BindTexture(TextureTarget.Texture2D, texture);
-                    _gl.Uniform1(_useTextureLocation, 1);
-                }
-                else
-                {
-                    _gl.BindTexture(TextureTarget.Texture2D, 0);
-                    _gl.Uniform1(_useTextureLocation, 0);
+                    _gl.CullFace(GLEnum.Front);
+                    _gl.Uniform1(_renderOutlineLocation, 1);
+                    _gl.Uniform4(
+                        _outlineColorLocation,
+                        batch.OutlineColor.X,
+                        batch.OutlineColor.Y,
+                        batch.OutlineColor.Z,
+                        batch.OutlineColor.W);
+                    _gl.Uniform1(_outlineThicknessLocation, batch.OutlineThickness);
+                    _gl.DrawElements(
+                        PrimitiveType.Triangles,
+                        (uint)batch.IndexCount,
+                        DrawElementsType.UnsignedInt,
+                        (void*)(batch.StartIndex * sizeof(uint)));
                 }
 
+                _gl.CullFace(GLEnum.Back);
+                _gl.Uniform1(_renderOutlineLocation, 0);
                 _gl.DrawElements(
                     PrimitiveType.Triangles,
                     (uint)batch.IndexCount,
@@ -202,6 +232,9 @@ public sealed class SilkPreviewControl : OpenGlControlBase
             }
         }
 
+        _gl.ActiveTexture(TextureUnit.Texture1);
+        _gl.BindTexture(TextureTarget.Texture2D, 0);
+        _gl.ActiveTexture(TextureUnit.Texture0);
         _gl.BindTexture(TextureTarget.Texture2D, 0);
         _gl.BindVertexArray(0);
         _gl.UseProgram(0);
@@ -385,6 +418,19 @@ public sealed class SilkPreviewControl : OpenGlControlBase
         return texture;
     }
 
+    private unsafe void BindBatchTexture(PreviewTextureData? textureData, TextureUnit textureUnit, int useTextureLocation)
+    {
+        if (_gl is null)
+        {
+            return;
+        }
+
+        var texture = GetTexture(textureData);
+        _gl.ActiveTexture(textureUnit);
+        _gl.BindTexture(TextureTarget.Texture2D, texture);
+        _gl.Uniform1(useTextureLocation, texture == 0 ? 0 : 1);
+    }
+
     private void DeleteTextures()
     {
         if (_gl is null)
@@ -432,6 +478,16 @@ public sealed class SilkPreviewControl : OpenGlControlBase
         _targetOffset += right * (float)(-delta.X * scale) + up * (float)(delta.Y * scale);
     }
 
+    private static bool ShouldRenderOutline(PreviewDrawBatch batch)
+    {
+        return batch.OutlineThickness > 0.000001f && batch.OutlineColor.W > 0.000001f;
+    }
+
+    private static Vector3 SafeNormalize(Vector3 value)
+    {
+        return value.LengthSquared() < 0.000001f ? DefaultLightDirection : Vector3.Normalize(value);
+    }
+
     private static uint CreateProgram(GL gl)
     {
         const string vertexShaderSource = """
@@ -442,6 +498,8 @@ public sealed class SilkPreviewControl : OpenGlControlBase
             layout (location = 3) in vec2 aTexCoord;
 
             uniform mat4 uMvp;
+            uniform int uRenderOutline;
+            uniform float uOutlineThickness;
 
             out vec3 vNormal;
             out vec4 vColor;
@@ -449,7 +507,13 @@ public sealed class SilkPreviewControl : OpenGlControlBase
 
             void main()
             {
-                gl_Position = uMvp * vec4(aPosition, 1.0);
+                vec3 position = aPosition;
+                if (uRenderOutline == 1)
+                {
+                    position += normalize(aNormal) * uOutlineThickness;
+                }
+
+                gl_Position = uMvp * vec4(position, 1.0);
                 vNormal = aNormal;
                 vColor = aColor;
                 vTexCoord = aTexCoord;
@@ -463,16 +527,38 @@ public sealed class SilkPreviewControl : OpenGlControlBase
             in vec2 vTexCoord;
 
             uniform sampler2D uColorTexture;
+            uniform sampler2D uShadeTexture;
             uniform int uUseTexture;
+            uniform int uUseShadeTexture;
+            uniform vec3 uLightDirection;
+            uniform int uRenderOutline;
+            uniform vec4 uOutlineColor;
 
             out vec4 FragColor;
 
             void main()
             {
-                vec3 lightDir = normalize(vec3(0.3, 0.8, 0.6));
-                float lambert = max(dot(normalize(vNormal), lightDir), 0.15);
+                if (uRenderOutline == 1)
+                {
+                    FragColor = uOutlineColor;
+                    return;
+                }
+
+                vec3 normal = normalize(vNormal);
+                vec3 lightDir = normalize(uLightDirection);
+                float lightDot = dot(normal, lightDir);
                 vec4 baseColor = uUseTexture == 1 ? texture(uColorTexture, vTexCoord) : vColor;
-                FragColor = vec4(baseColor.rgb * lambert, baseColor.a);
+                if (uUseShadeTexture == 1)
+                {
+                    float ramp = clamp(lightDot * 0.6 + 0.38, 0.0, 1.0);
+                    vec4 shadeColor = texture(uShadeTexture, vec2(ramp, 0.5));
+                    FragColor = vec4(baseColor.rgb * shadeColor.rgb, baseColor.a);
+                }
+                else
+                {
+                    float lambert = max(lightDot, 0.15);
+                    FragColor = vec4(baseColor.rgb * lambert, baseColor.a);
+                }
             }
             """;
 

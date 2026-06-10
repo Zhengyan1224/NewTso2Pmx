@@ -18,6 +18,8 @@ public sealed class PreviewSceneBuilder
         new(0.90f, 0.49f, 0.13f, 1.0f)
     ];
 
+    private static readonly NumericsVector3 DefaultLightDirection = NumericsVector3.Normalize(new(0.3f, 0.8f, 0.6f));
+
     public PreviewSceneData Build(LoadedDocument document, IReadOnlyList<bool> selectedSubMeshes)
     {
         ArgumentNullException.ThrowIfNull(document);
@@ -62,10 +64,15 @@ public sealed class PreviewSceneBuilder
                 var batchIndexCount = indices.Count - batchStart;
                 if (batchIndexCount > 0)
                 {
+                    var subScript = tso.sub_scripts[scriptIndex];
                     drawBatches.Add(new PreviewDrawBatch(
                         batchStart,
                         batchIndexCount,
-                        CreatePreviewTexture(tso, GetColorTextureName(tso.sub_scripts[scriptIndex]))));
+                        CreatePreviewTexture(tso, GetColorTextureName(subScript)),
+                        CreatePreviewTexture(tso, GetShadeTextureName(subScript)),
+                        GetLightDirection(subScript),
+                        GetOutlineColor(subScript),
+                        GetOutlineThickness(subScript)));
                 }
             }
         }
@@ -179,6 +186,91 @@ public sealed class PreviewSceneBuilder
         try
         {
             return subScript.shader.ColorTexName;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static string? GetShadeTextureName(TSOSubScript subScript)
+    {
+        try
+        {
+            return subScript.shader.ShadeTexName;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static NumericsVector3 GetLightDirection(TSOSubScript subScript)
+    {
+        try
+        {
+            var lightDir = subScript.shader.LightDir;
+            var direction = new NumericsVector3(-lightDir.X, -lightDir.Y, -lightDir.Z);
+            if (direction.LengthSquared() < 0.000001f)
+            {
+                return DefaultLightDirection;
+            }
+
+            return NumericsVector3.Normalize(direction);
+        }
+        catch
+        {
+            return DefaultLightDirection;
+        }
+    }
+
+    private static NumericsVector4 GetOutlineColor(TSOSubScript subScript)
+    {
+        if (!UsesOutline(subScript))
+        {
+            return NumericsVector4.Zero;
+        }
+
+        var parameter = GetShaderParameter(subScript, "PenColor");
+        if (parameter is null)
+        {
+            return new NumericsVector4(0.0f, 0.0f, 0.0f, 1.0f);
+        }
+
+        var color = parameter.GetFloat4();
+        return new NumericsVector4(color.X, color.Y, color.Z, color.W);
+    }
+
+    private static float GetOutlineThickness(TSOSubScript subScript)
+    {
+        if (!UsesOutline(subScript))
+        {
+            return 0.0f;
+        }
+
+        var thickness = GetShaderParameter(subScript, "Thickness")?.GetFloat() ?? 0.001f;
+        return Math.Clamp(thickness, 0.0f, 1.0f);
+    }
+
+    private static bool UsesOutline(TSOSubScript subScript)
+    {
+        var technique = GetTechniqueName(subScript);
+        return !string.IsNullOrWhiteSpace(technique) &&
+            technique.Contains("Shadow", StringComparison.OrdinalIgnoreCase) &&
+            !technique.Contains("InkOff", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string? GetTechniqueName(TSOSubScript subScript)
+    {
+        return GetShaderParameter(subScript, "technique")?.GetString();
+    }
+
+    private static ShaderParameter? GetShaderParameter(TSOSubScript subScript, string name)
+    {
+        try
+        {
+            return subScript.shader.shader_parameters.FirstOrDefault(parameter =>
+                string.Equals(parameter.Name, name, StringComparison.Ordinal));
         }
         catch
         {

@@ -40,7 +40,11 @@ public sealed class PreviewSceneData
 public sealed record PreviewDrawBatch(
     int StartIndex,
     int IndexCount,
-    PreviewTextureData? ColorTexture);
+    PreviewTextureData? ColorTexture,
+    PreviewTextureData? ShadeTexture,
+    Vector3 LightDirection,
+    Vector4 OutlineColor,
+    float OutlineThickness);
 
 public sealed record PreviewTextureData(
     string Name,
